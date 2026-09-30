@@ -334,7 +334,7 @@ const Field = {
     const wi = this.map.warps.findIndex(w => w.x === p.x && w.y === p.y);
     if (wi >= 0 && [MB.CAVE_DOOR, MB.REGULAR_WARP, MB.WARP_DOOR, MB.UP_ESCALATOR, MB.DOWN_ESCALATOR].includes(here.beh)) {
       const w = this.map.warps[wi];
-      VM.start(async () => { sfx('door'); await this.warp(this.map.warpsTo[wi], +w.dest_warp_id); });
+      VM.start(async () => { sfx(here.beh === MB.WARP_DOOR ? 'door' : 'exit'); await this.warp(this.map.warpsTo[wi], +w.dest_warp_id); });
       return true;
     }
     // poison
@@ -384,7 +384,7 @@ const Field = {
     const stair = (d === DIR_WEST && (beh === MB.UP_LEFT_STAIR || beh === MB.DOWN_LEFT_STAIR)) || (d === DIR_EAST && (beh === MB.UP_RIGHT_STAIR || beh === MB.DOWN_RIGHT_STAIR));
     if (beh !== arrow && !stair) return false;
     const w = this.map.warps[wi];
-    VM.start(async () => { sfx('door'); await this.warp(this.map.warpsTo[wi], +w.dest_warp_id); });
+    VM.start(async () => { sfx('exit'); await this.warp(this.map.warpsTo[wi], +w.dest_warp_id); });
     return true;
   },
   tryDoorWarp() {

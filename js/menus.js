@@ -636,7 +636,7 @@ async function optionMenu() {
     [S('gText_TextSpeed', 'TEXT SPEED'), ['SLOW', 'MID', 'FAST'], () => o.textSpeed - 1, v => { o.textSpeed = v + 1; }],
     [S('gText_BattleScene', 'BATTLE SCENE'), ['ON', 'OFF'], () => o.battleScene ? 0 : 1, v => { o.battleScene = v === 0; }],
     [S('gText_BattleStyle', 'BATTLE STYLE'), ['SHIFT', 'SET'], () => o.battleStyle === 'SET' ? 1 : 0, v => { o.battleStyle = v ? 'SET' : 'SHIFT'; }],
-    [S('gText_Sound', 'SOUND'), ['MONO', 'STEREO'], () => o.sound ? 1 : 0, v => { o.sound = !!v; }],
+    [S('gText_Sound', 'SOUND'), ['MONO', 'STEREO'], () => o.stereo ? 1 : 0, v => { o.stereo = !!v; }],
     [S('gText_ButtonMode', 'BUTTON MODE'), ['HELP', 'LR', 'L=A'], () => 0, () => { }],
     [S('gText_Frame', 'FRAME'), ['TYPE1'], () => 0, () => { }],
     [S('gText_OptionMenuCancel', 'CANCEL'), null],

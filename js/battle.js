@@ -1017,8 +1017,11 @@ class Battle {
   }
 }
 
+const HB_FILL = 'rgb(255,255,222)';
 // healthbox nickname + gender and {LV_2}level, FONT_SMALL (battle_interface.c)
 function drawHealthboxText(m, nx, lx, y) {
+  // name/level windows are filled with the box colour first (covers the template's placeholder "Lv")
+  rect(nx, y + 5, lx - nx, 11, HB_FILL); rect(lx, y + 5, 24, 11, HB_FILL);
   const g = (m.id === 29 || m.id === 32) && !m.nick ? '' : m.gender === 'M' ? '♂' : m.gender === 'F' ? '♀' : '';
   const ex = drawGameText(m.name, nx, y + 3, TC.DARK_GRAY, 'small');
   if (g) drawGameText(g, ex, y + 3, g === '♂' ? TC.BLUE : TC.RED, 'small');

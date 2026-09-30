@@ -65,7 +65,10 @@ function anyAB() { return btn('a') || btn('b'); }
 // ---------- sound (tiny synth beeps) ----------
 const Audio_ = {
   ac: null,
-  unlock() { if (!this.ac) { try { this.ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { } } },
+  unlock() {
+    if (!this.ac) { try { this.ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { } if (this.ac && typeof Music !== 'undefined') setTimeout(() => Music.onUnlock(), 0); }
+    else if (this.ac.state === 'suspended') this.ac.resume();
+  },
   tone(freq, dur, type = 'square', vol = 0.05, delay = 0) {
     if (!G.options.sound || !this.ac) return;
     const t = this.ac.currentTime + delay;
@@ -102,11 +105,11 @@ const Audio_ = {
 };
 Object.assign(Audio_, {
   playMapMusic(song) { this.playSong(song); },
-  playSong(song) { if (window.Music) Music.play(song); },
-  fanfare(song) { if (window.Music) Music.fanfare(song); },
-  waitFanfare() { return window.Music ? Music.waitFanfare() : wait(1); },
-  cry(id, faint) { if (window.Cries) Cries.play(id, faint); },
-  playTrainerEncounter(tr) { if (!tr || !window.Music) return; const m = tr.music || ''; Music.play(/FEMALE/.test(m) ? 'MUS_ENCOUNTER_GIRL' : /ROCKET/.test(m) ? 'MUS_ENCOUNTER_ROCKET' : /GYM|LEADER/.test(m) ? 'MUS_ENCOUNTER_GYM_LEADER' : /RIVAL/.test(m) ? 'MUS_ENCOUNTER_RIVAL' : 'MUS_ENCOUNTER_BOY'); },
+  playSong(song) { if (typeof Music !== 'undefined') Music.play(song); },
+  fanfare(song) { if (typeof Music !== 'undefined') Music.fanfare(song); },
+  waitFanfare() { return typeof Music !== 'undefined' ? Music.waitFanfare() : wait(1); },
+  cry(id, faint) { if (typeof Cries !== 'undefined') Cries.play(id, faint); },
+  playTrainerEncounter(tr) { if (!tr || typeof Music === 'undefined') return; const m = tr.music || ''; Music.play(/FEMALE|GIRL/.test(m) ? 'MUS_ENCOUNTER_GIRL' : /ROCKET/.test(m) ? 'MUS_ENCOUNTER_ROCKET' : /GYM|LEADER/.test(m) ? 'MUS_ENCOUNTER_GYM_LEADER' : /RIVAL/.test(m) ? 'MUS_ENCOUNTER_RIVAL' : 'MUS_ENCOUNTER_BOY'); },
 });
 const sfx = n => Audio_.sfx(n);
 

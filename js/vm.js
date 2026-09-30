@@ -234,7 +234,7 @@ const VM = {
       case 'waitdooranim': return;
       case 'setmetatile': Field.overrides[Field.mapName + ',' + v(a[0]) + ',' + v(a[1])] = v(a[3]) ? 1 : 0; return;
       case 'fadescreen': case 'fadescreenspeed': { const t = a[0]; if (/TO_BLACK|TO_WHITE/.test(t)) await fadeOut(0.08, t.includes('WHITE') ? '#fff' : '#000'); else await fadeIn(0.08); return; }
-      case 'playse': sfx(this.seName(a[0])); return;
+      case 'playse': sfx(typeof SONGS !== 'undefined' && SONGS[a[0]] ? a[0] : this.seName(a[0])); return;
       case 'waitse': await wait(10); return;
       case 'playbgm': Audio_.playSong(a[0]); return;
       case 'savebgm': Audio_.saved = a[0]; return;
