@@ -1,33 +1,62 @@
 'use strict';
 // ============================================================
-//  POKEMON: individual pokemon (IV/EV/nature/ability/moves)
+//  POKEMON: individual pokemon using the original species data
 // ============================================================
+const STAT_KEYS = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
+const STAT_NAMES = { hp: 'HP', atk: 'ATTACK', def: 'DEFENSE', spa: 'SP. ATK', spd: 'SP. DEF', spe: 'SPEED', acc: 'accuracy', eva: 'evasiveness' };
+// nature stat modifiers in Gen III order (personality % 25): [up, down]
+const NATURE_MODS = [[], ['atk', 'def'], ['atk', 'spe'], ['atk', 'spa'], ['atk', 'spd'], ['def', 'atk'], [], ['def', 'spe'], ['def', 'spa'], ['def', 'spd'],
+  ['spe', 'atk'], ['spe', 'def'], [], ['spe', 'spa'], ['spe', 'spd'], ['spa', 'atk'], ['spa', 'def'], ['spa', 'spe'], [], ['spa', 'spd'],
+  ['spd', 'atk'], ['spd', 'def'], ['spd', 'spe'], ['spd', 'spa'], []];
+
+function expForLevel(gr, n) {
+  if (n <= 1) return 0;
+  const n3 = n * n * n;
+  switch (gr) {
+    case 'fast': return Math.floor(4 * n3 / 5);
+    case 'medium_fast': return n3;
+    case 'medium_slow': return Math.floor(6 * n3 / 5) - 15 * n * n + 100 * n - 140;
+    case 'slow': return Math.floor(5 * n3 / 4);
+    case 'erratic':
+      if (n <= 50) return Math.floor(n3 * (100 - n) / 50);
+      if (n <= 68) return Math.floor(n3 * (150 - n) / 100);
+      if (n <= 98) return Math.floor(n3 * Math.floor((1911 - 10 * n) / 3) / 500);
+      return Math.floor(n3 * (160 - n) / 100);
+    case 'fluctuating':
+      if (n <= 15) return Math.floor(n3 * (Math.floor((n + 1) / 3) + 24) / 50);
+      if (n <= 36) return Math.floor(n3 * (n + 14) / 50);
+      return Math.floor(n3 * (Math.floor(n / 2) + 32) / 50);
+  }
+  return n3;
+}
+
 class Pokemon {
   static create(id, level, o = {}) {
     const p = new Pokemon();
     const sp = SPECIES[id];
     p.id = id; p.level = level;
     p.pid = (Math.random() * 0x100000000) >>> 0;
-    p.ivs = {}; STAT_KEYS.forEach(k => p.ivs[k] = rand(32));
+    p.otId = o.otId !== undefined ? o.otId : (Game.player ? Game.player.id : 0);
+    p.otName = o.ot || (Game.player ? Game.player.name : '');
+    p.ivs = {};
+    if (o.fixedIV !== undefined) STAT_KEYS.forEach(k => p.ivs[k] = o.fixedIV);
+    else STAT_KEYS.forEach(k => p.ivs[k] = rand(32));
     p.evs = {}; STAT_KEYS.forEach(k => p.evs[k] = 0);
     p.nature = p.pid % 25;
-    // Gen III shininess: (TID ^ SID ^ PIDhi ^ PIDlo) < 8  -> 1/8192
-    p.shiny = rand(8192) === 0;
     p.abilityIdx = sp.ab.length > 1 ? (p.pid & 1) : 0;
-    // gender: compare low byte of personality to species threshold
-    if (sp.g < 0) p.gender = null;
-    else if (sp.g === 0) p.gender = 'M';
-    else if (sp.g === 8) p.gender = 'F';
-    else p.gender = (p.pid & 0xff) < Math.round(sp.g / 8 * 256) ? 'F' : 'M';
+    const g = sp.g, low = p.pid & 0xff;
+    p.gender = g === 255 ? null : g === 254 ? 'F' : g === 0 ? 'M' : (g > low ? 'F' : 'M');
+    // Gen III shiny check: (TID ^ SID ^ PIDhi ^ PIDlo) < 8
+    const sid = o.sid !== undefined ? o.sid : (Game.player ? (Game.player.sid || 0) : 0);
+    p.shiny = (((p.otId & 0xFFFF) ^ sid ^ (p.pid >>> 16) ^ (p.pid & 0xFFFF)) < 8);
     p.exp = expForLevel(sp.gr, level);
-    p.nick = null;
-    p.status = null; p.sleep = 0;
-    p.otName = o.ot || (window.Game && Game.player ? Game.player.name : 'OT');
-    p.otId = o.otId !== undefined ? o.otId : (window.Game && Game.player ? Game.player.id : 0);
-    p.metLevel = level; p.metMap = o.met || '';
+    p.nick = null; p.status = null; p.sleep = 0;
+    p.metLevel = level; p.metLoc = o.met || '';
     p.ball = o.ball || 'POKE_BALL';
+    p.item = o.item || null;
+    p.friendship = sp.friendship;
     p.moves = [];
-    if (o.moves) o.moves.forEach(m => p.moves.push({ id: m, pp: MOVES[m].pp }));
+    if (o.moves && o.moves.length) o.moves.forEach(m => MOVES[m] && p.moves.push({ id: m, pp: MOVES[m].pp }));
     else p.defaultMoves();
     p.calcStats();
     p.hp = p.stats.hp;
@@ -35,30 +64,33 @@ class Pokemon {
   }
   static from(o) { const p = Object.assign(new Pokemon(), JSON.parse(JSON.stringify(o))); p.calcStats(); return p; }
   toJSON() { const o = Object.assign({}, this); delete o.stats; return o; }
-
   get sp() { return SPECIES[this.id]; }
   get name() { return this.nick || this.sp.name; }
-  get types() { return this.sp.types; }
+  get types() { const t = this.sp.types; return t[0] === t[1] ? [t[0]] : t; }
   get ability() { return this.sp.ab[this.abilityIdx] || this.sp.ab[0]; }
-  get natureName() { return NATURES[this.nature][0]; }
+  get natureName() { return NATURE_NAMES[this.nature]; }
   get fainted() { return this.hp <= 0; }
-
   defaultMoves() {
-    // last four level-up moves learned at or below current level
+    // Gen III: moves learned at or below the current level, last four (GiveMonInitialMoveset)
     const learned = [];
-    for (const [lv, m] of this.sp.ls) if (lv <= this.level && !learned.includes(m)) learned.push(m);
-    this.moves = learned.slice(-4).map(m => ({ id: m, pp: MOVES[m].pp }));
+    for (const [lv, m] of this.sp.ls) {
+      if (lv > this.level) break;
+      if (learned.includes(m)) continue;
+      if (learned.length === 4) learned.shift();
+      learned.push(m);
+    }
+    this.moves = learned.map(m => ({ id: m, pp: MOVES[m].pp }));
   }
   calcStats() {
-    const sp = this.sp, n = NATURES[this.nature];
+    const sp = this.sp, mods = NATURE_MODS[this.nature];
     const s = {};
     STAT_KEYS.forEach((k, i) => {
       const base = sp.b[i], iv = this.ivs[k], ev = Math.floor(this.evs[k] / 4);
-      if (k === 'hp') s.hp = Math.floor((2 * base + iv + ev) * this.level / 100) + this.level + 10;
+      if (k === 'hp') s.hp = this.id === 292 ? 1 : Math.floor((2 * base + iv + ev) * this.level / 100) + this.level + 10;
       else {
         let v = Math.floor((2 * base + iv + ev) * this.level / 100) + 5;
-        if (n[1] === k) v = Math.floor(v * 1.1);
-        if (n[2] === k) v = Math.floor(v * 0.9);
+        if (mods[0] === k) v = Math.floor(v * 110 / 100);
+        if (mods[1] === k) v = Math.floor(v * 90 / 100);
         s[k] = v;
       }
     });
@@ -66,7 +98,8 @@ class Pokemon {
   }
   expForNext() { return this.level >= 100 ? this.exp : expForLevel(this.sp.gr, this.level + 1); }
   expThisLevel() { return expForLevel(this.sp.gr, this.level); }
-  heal() { this.hp = this.stats.hp; this.status = null; this.sleep = 0; this.moves.forEach(m => m.pp = MOVES[m.id].pp); }
+  heal() { this.hp = this.stats.hp; this.status = null; this.sleep = 0; this.moves.forEach(m => m.pp = this.maxPP(m)); }
+  maxPP(m) { const b = MOVES[m.id].pp; return b + Math.floor(b * (m.ppUps || 0) / 5); }
   hasMove(id) { return this.moves.some(m => m.id === id); }
   addEVs(ev) {
     let total = STAT_KEYS.reduce((a, k) => a + this.evs[k], 0);
@@ -75,29 +108,36 @@ class Pokemon {
       if (add > 0) { this.evs[k] += add; total += add; }
     }
   }
-  // moves learned exactly at a given level
   movesAtLevel(lv) { return this.sp.ls.filter(([l]) => l === lv).map(([, m]) => m); }
-  canEvolve() { const e = this.sp.evo; return e && this.level >= e[0] && SPECIES[e[1]]; }
+  levelEvolution() {
+    for (const [type, param, to] of this.sp.evo) {
+      if (type === 'LEVEL' && this.level >= +param && SPECIES[to]) return to;
+      if (type === 'FRIENDSHIP' && this.friendship >= 220 && SPECIES[to]) return to;
+      if (type === 'LEVEL_ATK_GT_DEF' && this.level >= +param && this.stats.atk > this.stats.def) return to;
+      if (type === 'LEVEL_ATK_EQ_DEF' && this.level >= +param && this.stats.atk === this.stats.def) return to;
+      if (type === 'LEVEL_ATK_LT_DEF' && this.level >= +param && this.stats.atk < this.stats.def) return to;
+    }
+    return null;
+  }
+  canEvolve() { return this.levelEvolution(); }
 }
 
-// status display
-const STATUS_LABEL = { psn: 'PSN', tox: 'PSN', par: 'PAR', slp: 'SLP', brn: 'BRN', frz: 'FRZ' };
-const STATUS_COLOR = { psn: '#a040a0', tox: '#a040a0', par: '#c8a800', slp: '#8890a0', brn: '#e05030', frz: '#60b0d0' };
-function drawStatus(st, x, y) {
-  if (!st) return;
-  roundRect(x, y, 20, 8, 2, STATUS_COLOR[st]);
-  text(STATUS_LABEL[st], x + 10, y - 1, '#f8f8f8', null, 8, 'center');
+// ---------- sprites ----------
+function monSpriteSrc(id, back, shiny) { return `assets/sprites/${back ? (shiny ? 'shiny_back' : 'back') : (shiny ? 'shiny' : 'front')}/${id}.png`; }
+function drawMonSprite(id, back, x, y, opts = {}) {
+  const im = loadImg(monSpriteSrc(id, back, opts.shiny));
+  if (!im.complete || !im.naturalWidth) return;
+  if (opts.clipH !== undefined) {
+    const ch = Math.max(0, Math.min(64, opts.clipH));
+    ctx.drawImage(im, 0, 0, 64, ch, x, y + (64 - ch), 64, ch);
+    return;
+  }
+  if (opts.alpha !== undefined) ctx.globalAlpha = opts.alpha;
+  if (opts.flip) { ctx.save(); ctx.translate(x + 64, y); ctx.scale(-1, 1); ctx.drawImage(im, 0, 0); ctx.restore(); }
+  else ctx.drawImage(im, x, y);
+  ctx.globalAlpha = 1;
 }
-function drawHPBar(x, y, w, hp, max) {
-  const frac = Math.max(0, hp / max);
-  roundRect(x - 14, y - 1, w + 16, 5, 2, '#404848');
-  text('HP', x - 13, y - 3, '#f8b830', null, 6);
-  rect(x, y, w, 3, '#506058');
-  const col = frac > 0.5 ? '#58d080' : frac > 0.2 ? '#f8c828' : '#f85838';
-  rect(x, y, Math.ceil(w * frac), 3, col);
-  rect(x, y, Math.ceil(w * frac), 1, frac > 0.5 ? '#90f8b0' : frac > 0.2 ? '#f8e888' : '#f8a888');
-}
-function genderSym(g, x, y) {
-  if (g === 'M') text('♂', x, y, '#4080f0', '#a0c0f8', 10);
-  else if (g === 'F') text('♀', x, y, '#f05060', '#f8b0b8', 10);
+function drawMonIcon(id, x, y, frame = 0) {
+  const im = loadImg(`assets/sprites/icon/${id}.png`);
+  if (im.complete && im.naturalWidth) ctx.drawImage(im, 0, frame * 32, 32, 32, x, y, 32, 32);
 }

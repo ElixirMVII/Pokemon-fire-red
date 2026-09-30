@@ -6,7 +6,6 @@ const SCALE = 3, W = 240, H = 160, TILE = 16;
 const canvas = document.getElementById('screen');
 canvas.width = W * SCALE; canvas.height = H * SCALE;
 const ctx = canvas.getContext('2d');
-const FONT = '"Pixelify Sans", "Trebuchet MS", Verdana, sans-serif';
 
 function resetTransform() { ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0); ctx.imageSmoothingEnabled = false; }
 
@@ -101,6 +100,14 @@ const Audio_ = {
     }
   }
 };
+Object.assign(Audio_, {
+  playMapMusic(song) { this.playSong(song); },
+  playSong(song) { if (window.Music) Music.play(song); },
+  fanfare(song) { if (window.Music) Music.fanfare(song); },
+  waitFanfare() { return window.Music ? Music.waitFanfare() : wait(1); },
+  cry(id, faint) { if (window.Cries) Cries.play(id, faint); },
+  playTrainerEncounter(tr) { if (!tr || !window.Music) return; const m = tr.music || ''; Music.play(/FEMALE/.test(m) ? 'MUS_ENCOUNTER_GIRL' : /ROCKET/.test(m) ? 'MUS_ENCOUNTER_ROCKET' : /GYM|LEADER/.test(m) ? 'MUS_ENCOUNTER_GYM_LEADER' : /RIVAL/.test(m) ? 'MUS_ENCOUNTER_RIVAL' : 'MUS_ENCOUNTER_BOY'); },
+});
 const sfx = n => Audio_.sfx(n);
 
 // ---------- UI stack ----------
@@ -128,16 +135,6 @@ class Screen {
 
 // ---------- drawing helpers ----------
 function rect(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); }
-function setFont(size = 10, weight = 400) { ctx.font = `${weight} ${size}px ${FONT}`; ctx.textBaseline = 'top'; }
-function textW(s, size = 10) { setFont(size); return ctx.measureText(s).width; }
-// FR-style text with drop shadow
-function text(s, x, y, color = '#484848', shadow = '#d0d0c8', size = 10, align = 'left') {
-  setFont(size);
-  ctx.textAlign = align;
-  if (shadow) { ctx.fillStyle = shadow; ctx.fillText(s, x + 0.66, y + 0.66); }
-  ctx.fillStyle = color; ctx.fillText(s, x, y);
-  ctx.textAlign = 'left';
-}
 function roundRect(x, y, w, h, r, c) {
   ctx.fillStyle = c; ctx.beginPath();
   ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
@@ -145,152 +142,6 @@ function roundRect(x, y, w, h, r, c) {
   ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
   ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.fill();
 }
-// FR field window: white with blue-grey frame
-function drawBox(x, y, w, h, style = 'field') {
-  if (style === 'battle') {
-    rect(x, y, w, h, '#284860');
-    rect(x, y, w, 1, '#c86030'); rect(x, y + h - 1, w, 1, '#c86030');
-    roundRect(x + 2, y + 2, w - 4, h - 4, 3, '#f8f8f8');
-    roundRect(x + 3, y + 3, w - 6, h - 6, 2, '#305070');
-    return;
-  }
-  if (style === 'sign') {
-    roundRect(x, y, w, h, 3, '#506070');
-    roundRect(x + 1, y + 1, w - 2, h - 2, 3, '#e8e0c0');
-    roundRect(x + 3, y + 3, w - 6, h - 6, 2, '#f8f8f0');
-    return;
-  }
-  roundRect(x, y, w, h, 3, '#506878');
-  roundRect(x + 1, y + 1, w - 2, h - 2, 3, '#a0c0d8');
-  roundRect(x + 3, y + 3, w - 6, h - 6, 2, '#f8f8f8');
-}
-function cursor(x, y, color = '#484848') {
-  ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 5, y + 4); ctx.lineTo(x, y + 8); ctx.fill();
-}
-function downArrow(x, y) {
-  if (Math.floor(G.frame / 16) % 2) return;
-  ctx.fillStyle = '#e04040'; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 7, y); ctx.lineTo(x + 3.5, y + 4); ctx.fill();
-}
-
-// ---------- text box ----------
-function wrapText(str, maxW, size = 10) {
-  setFont(size);
-  const pages = [];
-  for (const pageStr of str.split('\f')) {
-    const lines = [];
-    for (const para of pageStr.split('\n')) {
-      const words = para.split(' ');
-      let line = '';
-      for (const w of words) {
-        const t = line ? line + ' ' + w : w;
-        if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; }
-        else line = t;
-      }
-      lines.push(line);
-    }
-    for (let i = 0; i < lines.length; i += 2) pages.push(lines.slice(i, i + 2));
-  }
-  return pages;
-}
-
-class TextBox {
-  constructor(str, opts = {}) {
-    this.style = opts.style || 'field';
-    this.hold = !!opts.hold;       // resolve when fully printed but stay open
-    this.auto = opts.auto || 0;    // auto-advance after N frames (battle)
-    this.box = this.style === 'battle' ? { x: 0, y: 112, w: 240, h: 48 } : { x: 2, y: 114, w: 236, h: 44 };
-    if (opts.narrow) this.box.w = opts.narrow;
-    this.pages = wrapText(str, this.box.w - 24);
-    this.page = 0; this.chars = 0; this.t = 0; this.resolvedHold = false;
-  }
-  pageLen() { return this.pages[this.page].join('').length; }
-  update() {
-    const len = this.pageLen();
-    if (this.chars < len) {
-      const sp = [1, 2, 4][G.options.textSpeed - 1] || 2;
-      this.chars = Math.min(len, this.chars + sp);
-      if (anyAB()) this.chars = len;
-      return;
-    }
-    const last = this.page >= this.pages.length - 1;
-    if (last && this.hold) {
-      if (!this.resolvedHold) { this.resolvedHold = true; const r = this._resolve; this._resolve = null; r && r(this); }
-      return;
-    }
-    this.t++;
-    if (anyAB() || (this.auto && this.t > this.auto)) {
-      if (btn('a') || btn('b')) sfx('select');
-      if (last) closeUI(this);
-      else { this.page++; this.chars = 0; this.t = 0; }
-    }
-  }
-  draw() {
-    const b = this.box;
-    const battle = this.style === 'battle';
-    drawBox(b.x, b.y, b.w, b.h, this.style);
-    const lines = this.pages[this.page];
-    let n = this.chars;
-    const col = battle ? '#f8f8f8' : '#404040', sh = battle ? '#685868' : '#d0d0c8';
-    lines.forEach((ln, i) => {
-      const s = ln.slice(0, Math.max(0, n)); n -= ln.length;
-      text(s, b.x + 11, b.y + 8 + i * 15, col, sh, 11);
-    });
-    if (this.chars >= this.pageLen() && !this.hold && !this.auto) downArrow(b.x + b.w - 16, b.y + b.h - 11);
-  }
-}
-
-// say(): show text and wait for confirmation. Use {hold:true} to keep it on screen (returns the box)
-function say(str, opts = {}) { return pushUI(new TextBox(str, opts)); }
-
-// ---------- menu ----------
-class Menu {
-  constructor(items, opts = {}) {
-    this.items = items; this.idx = opts.initial || 0;
-    this.cancel = opts.cancel !== undefined ? opts.cancel : true;
-    this.cols = opts.cols || 1;
-    this.size = opts.size || 11;
-    this.lineH = opts.lineH || 15;
-    const maxW = Math.max(...items.map(s => textW(s, this.size)));
-    const rows = Math.ceil(items.length / this.cols);
-    this.colW = opts.colW || maxW + 18;
-    this.w = opts.w || this.colW * this.cols + 12;
-    this.h = rows * this.lineH + 12;
-    this.x = opts.x !== undefined ? opts.x : W - this.w - 2;
-    this.y = opts.y !== undefined ? opts.y : (opts.bottom !== undefined ? opts.bottom - this.h : 2);
-    this.onMove = opts.onMove; this.style = opts.style || 'field';
-    this.drawExtra = opts.drawExtra;
-  }
-  update() {
-    const n = this.items.length, c = this.cols;
-    let i = this.idx;
-    if (btnR('up')) i = i - c >= 0 ? i - c : i;
-    if (btnR('down')) i = i + c < n ? i + c : i;
-    if (c > 1 && btnR('left')) i = i % c > 0 ? i - 1 : i;
-    if (c > 1 && btnR('right')) i = i % c < c - 1 && i + 1 < n ? i + 1 : i;
-    if (c === 1 && btnR('up') && this.idx === 0 && this.wrap) i = n - 1;
-    if (i !== this.idx) { this.idx = i; sfx('select'); this.onMove && this.onMove(i); }
-    if (btn('a')) { sfx('select'); closeUI(this, this.idx); }
-    else if (btn('b') && this.cancel) { sfx('select'); closeUI(this, -1); }
-  }
-  draw() {
-    drawBox(this.x, this.y, this.w, this.h, this.style);
-    this.items.forEach((s, i) => {
-      const cx = this.x + 8 + (i % this.cols) * this.colW, cy = this.y + 6 + Math.floor(i / this.cols) * this.lineH;
-      text(s, cx + 9, cy + 1, '#404040', '#d0d0c8', this.size);
-      if (i === this.idx) cursor(cx, cy + 3);
-    });
-    this.drawExtra && this.drawExtra(this);
-  }
-}
-function choose(items, opts) { return pushUI(new Menu(items, opts)); }
-
-async function ask(str, items = ['YES', 'NO'], opts = {}) {
-  const tb = await say(str, { hold: true, style: opts.style });
-  const r = await choose(items, Object.assign({ bottom: 112, x: W - 60, cancel: true }, opts.menu || {}));
-  closeUI(tb);
-  return r;
-}
-async function yesNo(str, opts = {}) { return (await ask(str, ['YES', 'NO'], opts)) === 0; }
 
 // ---------- fading ----------
 function fadeTo(target, speed = 0.08, color = '#000') {

@@ -1,727 +1,881 @@
 'use strict';
 // ============================================================
-//  MENUS: start menu, party, summary, bag, dex, card, mart, PC, naming
+//  MENUS: start menu, party, summary, bag, save, option, card,
+//  pokedex entry, naming, mart and PC — laid out after the
+//  window templates in pret/pokefirered (party_menu.c, bag.c,
+//  pokemon_summary_screen.c, start_menu.c, ...)
 // ============================================================
-function menuBg(c1 = '#3870a0', c2 = '#4880b0') {
-  rect(0, 0, W, H, c1);
-  for (let y = 0; y < H; y += 8) for (let x = (y / 8) % 2 * 8; x < W; x += 16) rect(x, y, 8, 8, c2);
+function S(key, fallback, extra) { const t = (typeof STRINGS !== 'undefined' && STRINGS[key]) || (typeof TEXTS !== 'undefined' && TEXTS[key]); return expandText(t !== undefined ? t : fallback, extra); }
+// expand a string that uses DynamicPlaceholderTextUtil ({DYNAMIC 0x0N})
+function Sdyn(key, fallback, args) {
+  const raw = (STRINGS[key] !== undefined ? STRINGS[key] : fallback).replace(/\{DYNAMIC 0x0(\d)\}/g, (m, n) => args[+n] !== undefined ? args[+n] : '');
+  return expandText(raw);
 }
-function monIcon(id, x, y, bob) {
-  ctx.drawImage(getMonSprite(id), x, y - (bob ? 1 : 0), 32, 32);
+function drawImg(src, x, y, sx, sy, w, h) {
+  const im = loadImg(src);
+  if (!im.complete || !im.naturalWidth) return;
+  if (sx === undefined) ctx.drawImage(im, x, y);
+  else ctx.drawImage(im, sx, sy, w, h, x, y, w, h);
+}
+const padL = (v, n, c = ' ') => String(v).padStart(n, c);
+const TYPE_ICON = { normal: 0x20, fighting: 0x64, flying: 0x60, poison: 0x80, ground: 0x48, rock: 0x44, bug: 0x6C, ghost: 0x68, steel: 0x88, mystery: 0xA4,
+  fire: 0x24, water: 0x28, grass: 0x2C, electric: 0x40, psychic: 0x84, ice: 0x4C, dragon: 0xA0, dark: 0x8C };
+function drawTypeIcon(t, x, y) { const o = TYPE_ICON[t] !== undefined ? TYPE_ICON[t] : 0xA4; drawImg('assets/ui/menu_info.png', x, y, (o % 16) * 8, Math.floor(o / 16) * 8, 32, 12); }
+const STATUS_ICON = { psn: 0, tox: 0, par: 1, slp: 2, frz: 3, brn: 4, pkrs: 5, fnt: 6 };
+function drawStatusIcon(st, x, y) { const i = STATUS_ICON[st]; if (i !== undefined) drawImg('assets/ui/status_icons.png', x, y, i * 32, 0, 32, 8); }
+function itemIcon(id, x, y) { if (id && imgReady(`assets/items/${id}.png`)) drawImg(`assets/items/${id}.png`, x, y); else loadImg(`assets/items/${id}.png`); }
+function playTimeStr() { const t = Math.floor(Game.playTime / 60); return `${Math.floor(t / 3600)}:${padL(Math.floor(t / 60) % 60, 2, '0')}`; }
+function genderSym(m) { return m.gender === 'M' ? '♂' : m.gender === 'F' ? '♀' : ''; }
+function nidoranNoSym(m) { return (m.id === 29 || m.id === 32) && !m.nick; }
+
+// key-driven overlay (not opaque) – same contract as core Screen
+class Overlay extends Screen { constructor(fn) { super(fn); this.opaque = false; } }
+async function enterFull(s) { await fadeOut(0.125); s.open(); await fadeIn(0.125); }
+async function leaveFull(s) { await fadeOut(0.125); s.close(); await fadeIn(0.125); }
+// message inside a menu screen, dialogue frame at the bottom
+async function menuMsg(text, o = {}) {
+  MsgBox.show(text, o);
+  await MsgBox.waitPrinted();
+  if (!o.noWait) await MsgBox.waitButton();
+  if (!o.keep) MsgBox.close();
+}
+async function menuYesNo(text, tx = 23, ty = 9) {
+  MsgBox.show(text); await MsgBox.waitPrinted();
+  const r = await yesNoBox(tx, ty);
+  MsgBox.close();
+  return r;
 }
 
-// ---------------- START MENU ----------------
+// ============================================================
+//  START MENU (start_menu.c: window left 22 top 1 width 7, rows 15px; help bar at tile row 15)
+// ============================================================
+let startCursor = 0;
+function startMenuItems() {
+  const it = [];
+  if (VM.flag('FLAG_SYS_POKEDEX_GET')) it.push(['POKEDEX', S('gText_MenuPokedex', 'POKéDEX'), 'gStartMenuDesc_Pokedex']);
+  if (VM.flag('FLAG_SYS_POKEMON_GET')) it.push(['POKEMON', S('gText_MenuPokemon', 'POKéMON'), 'gStartMenuDesc_Pokemon']);
+  it.push(['BAG', S('gText_MenuBag', 'BAG'), 'gStartMenuDesc_Bag']);
+  it.push(['PLAYER', Game.player.name, 'gStartMenuDesc_Player']);
+  it.push(['SAVE', S('gText_MenuSave', 'SAVE'), 'gStartMenuDesc_Save']);
+  it.push(['OPTION', S('gText_MenuOption', 'OPTION'), 'gStartMenuDesc_Option']);
+  it.push(['EXIT', S('gText_MenuExit', 'EXIT'), 'gStartMenuDesc_Exit']);
+  return it;
+}
+function drawHelpBar(text) {
+  drawImg('assets/ui/helpbar.png', 0, 120);
+  const lines = text.split('\n');
+  lines.forEach((l, i) => drawGameText(l, 2, 125 + i * 14, TC.WHITE));
+}
 async function openStartMenu() {
-  let last = openStartMenu.last || 0;
   while (true) {
-    const items = [];
-    if (flag('pokedex')) items.push(['POKéDEX', openDex]);
-    if (Game.party.length) items.push(['POKéMON', () => openParty('field')]);
-    items.push(['BAG', () => openBag('field')]);
-    items.push([Game.player.name, trainerCard]);
-    items.push(['SAVE', saveMenu]);
-    items.push(['OPTION', optionMenu]);
-    items.push(['EXIT', null]);
-    const r = await choose(items.map(i => i[0]), { x: W - 82, y: 2, w: 80, initial: Math.min(last, items.length - 1) });
-    if (r < 0 || !items[r][1]) return;
-    last = openStartMenu.last = r;
-    const res = await items[r][1]();
-    if (res === 'close') return;
+    const items = startMenuItems();
+    if (startCursor >= items.length) startCursor = 0;
+    const ov = new Overlay(() => {
+      const n = items.length;
+      drawStdFrame(22, 1, 7, n * 2 - 1);
+      items.forEach((it, i) => drawGameText(it[1], 184, 8 + i * 15, TC.DARK_GRAY));
+      drawGameText('▶', 176, 8 + startCursor * 15, TC.DARK_GRAY);
+      drawHelpBar(S(items[startCursor][2], ''));
+    });
+    ov.open();
+    let choice = null;
+    while (choice === null) {
+      const k = await ov.key();
+      if (k === 'up') { startCursor = (startCursor + items.length - 1) % items.length; sfx('select'); }
+      else if (k === 'down') { startCursor = (startCursor + 1) % items.length; sfx('select'); }
+      else if (k === 'a') { sfx('select'); choice = items[startCursor][0]; }
+      else if (k === 'b' || k === 'start') choice = 'EXIT';
+    }
+    ov.close();
+    switch (choice) {
+      case 'EXIT': return;
+      case 'POKEDEX': await openDex(); break;
+      case 'POKEMON': { const r = await openParty('field'); if (r === 'close') return; break; }
+      case 'BAG': { const r = await openBag('field'); if (r === 'close') return; break; }
+      case 'PLAYER': await trainerCard(); break;
+      case 'SAVE': if (await saveMenu()) return; break;
+      case 'OPTION': await optionMenu(); break;
+    }
   }
 }
 
-// ---------------- PARTY ----------------
+// ============================================================
+//  PARTY MENU (party_menu.c, single layout)
+// ============================================================
+let PARTY_COLORS = null;
+fetch('assets/ui/party_colors.json').then(r => r.json()).then(j => { PARTY_COLORS = j; }).catch(() => { });
+const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+function hpLevel(hp, max) { if (hp <= 0) return 'red'; const f = hp * 48 / max; return f > 24 ? 'green' : f > 9 ? 'yellow' : 'red'; }
+function drawPartyHPBar(m, x, y) {
+  const w = m.hp <= 0 ? 0 : Math.max(1, Math.floor(m.hp * 48 / m.stats.hp));
+  const c = PARTY_COLORS ? PARTY_COLORS[hpLevel(m.hp, m.stats.hp)] : [[112, 248, 168], [88, 208, 128]];
+  rect(x, y, w, 1, rgb(c[1])); rect(x, y + 1, w, 2, rgb(c[0]));
+}
+function drawPartySlot(m, i, st) {
+  const main = i === 0;
+  const wx = main ? 8 : 96, wy = main ? 24 : 8 + 24 * (i - 1);
+  if (!m) { drawImg('assets/ui/party_empty_normal.png', wx, wy); return; }
+  const faint = m.hp <= 0;
+  const kind = st.swapFrom === i || (st.swapFrom >= 0 && st.cursor === i) ? (st.cursor === i ? 'switchsel' : 'switch') : faint ? (st.cursor === i ? 'faintsel' : 'faint') : (st.cursor === i ? 'sel' : 'normal');
+  drawImg(`assets/ui/party_${main ? 'main' : 'wide'}_${kind}.png`, wx, wy);
+  const R = main ? { nick: [24, 11], lv: [32, 20], g: [64, 20], hp: [38, 36], max: [53, 36], bar: [24, 35], desc: [12, 34] }
+    : { nick: [22, 3], lv: [32, 12], g: [64, 12], hp: [102, 12], max: [117, 12], bar: [88, 10], desc: [77, 4] };
+  // pokeball, icon, status
+  const selected = st.cursor === i;
+  if (main) drawImg('assets/ui/party_pokeball.png', 0, 18, 0, selected ? 32 : 0, 32, 32);
+  else drawImg('assets/ui/party_pokeball_small.png', 94, 17 + 24 * (i - 1), 0, selected ? 16 : 0, 16, 16);
+  const bob = selected && !faint ? (Math.floor(G.frame / 6) % 2) : (faint ? 0 : Math.floor(G.frame / 24) % 2);
+  if (main) drawMonIcon(m.id, 0, 24 - (selected && bob ? 4 : 0), bob);
+  else drawMonIcon(m.id, 88, 2 + 24 * (i - 1) - (selected && bob ? 4 : 0), bob);
+  drawGameText(m.name, wx + R.nick[0], wy + R.nick[1], TC.WHITE, 'small');
+  if (st.desc) { drawGameText(st.desc(m, i), wx + R.desc[0], wy + R.desc[1], TC.WHITE); return; }
+  const status = faint ? 'fnt' : m.status;
+  if (status) drawStatusIcon(status, main ? 40 : 128, main ? 48 : 23 + 24 * (i - 1));
+  else drawGameText('' + m.level, wx + R.lv[0], wy + R.lv[1], TC.WHITE, 'small');
+  if (!nidoranNoSym(m) && m.gender) {
+    const c = PARTY_COLORS ? PARTY_COLORS[m.gender === 'M' ? 'male' : 'female'] : [[64, 200, 248], [0, 96, 144]];
+    drawGameText(genderSym(m), wx + R.g[0], wy + R.g[1], [rgb(c[0]), rgb(c[1])], 'small');
+  }
+  drawTextRight(String(m.hp), wx + R.hp[0] + 18, wy + R.hp[1], TC.WHITE, 'small');
+  drawGameText('/' + padL(m.stats.hp, 3), wx + R.max[0] + 3, wy + R.max[1], TC.WHITE, 'small');
+  drawPartyHPBar(m, wx + R.bar[0], wy + R.bar[1]);
+}
+function drawPartyScreen(st) {
+  drawImg('assets/ui/party_bg.png', 0, 0);
+  for (let i = 0; i < 6; i++) drawPartySlot(Game.party[i], i, st);
+  if (!st.noCancel) {
+    drawImg(`assets/ui/party_cancel_button_${st.cursor === 6 ? 'sel' : 'normal'}.png`, 184, 136);
+    const c = S('gFameCheckerText_Cancel', 'CANCEL');
+    drawGameText(c, 192 + Math.floor((48 - textWidth(c, 'small')) / 2), 137, TC.WHITE, 'small');
+  }
+  if (st.msg) {
+    const tw = st.msgW || 21;
+    drawStdFrame(1, 17, tw, 2);
+    drawGameText(st.msg, 8, 137, TC.DARK_GRAY);
+  }
+}
+async function animPartyHP(m, from, st) {
+  const to = m.hp; m.hp = from;
+  while (m.hp !== to) { m.hp += Math.sign(to - m.hp); await wait(1); }
+}
+// mode: field | battle | forced | select | useItem | give ; returns slot index or -1
 async function openParty(mode, opts = {}) {
-  const party = Game.party;
-  let idx = mode === 'battle' || mode === 'forced' ? 0 : 0;
-  let swapFrom = -1;
-  let msg = mode === 'item' || mode === 'tm' ? 'Use on which POKéMON?' : mode === 'select' ? (opts.prompt || 'Choose a POKéMON.') : 'Choose a POKéMON.';
-  const canCancel = mode !== 'forced';
-  const s = new Screen(() => {
-    menuBg('#306878', '#387888');
-    party.forEach((m, i) => drawPartySlot(m, i, i === idx, i === swapFrom, mode, opts));
-    // cancel button
-    if (canCancel) {
-      roundRect(176, 138, 60, 18, 4, idx === party.length ? '#f89838' : '#305060');
-      roundRect(178, 140, 56, 14, 3, idx === party.length ? '#f8d070' : '#90a8b8');
-      text('CANCEL', 206, 141, '#404040', '#d0d0c8', 10, 'center');
-    }
-    drawBox(2, 130, 170, 28);
-    text(msg, 12, 138, '#404040', '#d0d0c8', 10);
-  });
-  s.open();
-  const max = canCancel ? party.length : party.length - 1;
+  const battle = opts.battle;
+  const st = { cursor: opts.initial !== undefined ? opts.initial : (battle ? battle.P.idx : 0), swapFrom: -1, lastRight: 1, noCancel: false, msg: '' };
+  const baseMsg = () => mode === 'useItem' ? S('gText_UseOnWhichPokemon', 'Use on which POKéMON?') : mode === 'give' ? S('gText_GiveToWhichPokemon', 'Give to which POKéMON?') : S('gText_ChoosePokemon', 'Choose a POKéMON.');
+  st.msg = baseMsg(); st.msgW = mode === 'useItem' || mode === 'give' ? 21 : 16;
+  const scr = new Screen(() => drawPartyScreen(st));
+  await enterFull(scr);
+  const n = Game.party.length;
+  const done = async v => { await leaveFull(scr); return v; };
   while (true) {
-    const k = await s.key();
-    if (k === 'up') { idx = idx === 0 ? max : idx - 1; sfx('select'); }
-    else if (k === 'down') { idx = idx >= max ? 0 : idx + 1; sfx('select'); }
-    else if (k === 'left' && idx > 0 && idx < party.length) { idx = 0; sfx('select'); }
-    else if (k === 'right' && idx === 0 && party.length > 1) { idx = 1; sfx('select'); }
-    else if (k === 'b') {
-      if (swapFrom >= 0) { swapFrom = -1; msg = 'Choose a POKéMON.'; continue; }
-      if (canCancel) { sfx('select'); s.close(); return -1; }
+    const k = await scr.key();
+    const c = st.cursor;
+    if (k === 'up') { st.cursor = c === 6 ? n - 1 : c === 0 ? 6 : c - 1; sfx('select'); }
+    else if (k === 'down') { st.cursor = c === 6 ? 0 : c === n - 1 ? 6 : c + 1; sfx('select'); }
+    else if (k === 'left' && c > 0 && c < 6) { st.lastRight = c; st.cursor = 0; sfx('select'); }
+    else if (k === 'right' && c === 0 && n > 1) { st.cursor = Math.min(st.lastRight, n - 1); sfx('select'); }
+    else if (k === 'b' || (k === 'a' && c === 6)) {
+      if (st.swapFrom >= 0) { st.swapFrom = -1; st.msg = baseMsg(); sfx('select'); continue; }
+      if (mode === 'forced') continue;
+      sfx('select');
+      return done(-1);
     } else if (k === 'a') {
       sfx('select');
-      if (idx === party.length) { if (swapFrom >= 0) { swapFrom = -1; msg = 'Choose a POKéMON.'; continue; } s.close(); return -1; }
-      const mon = party[idx];
-      if (swapFrom >= 0) {
-        if (swapFrom !== idx) { const t = party[swapFrom]; party[swapFrom] = party[idx]; party[idx] = t; }
-        swapFrom = -1; msg = 'Choose a POKéMON.'; continue;
+      const m = Game.party[c];
+      if (st.swapFrom >= 0) {
+        if (c !== st.swapFrom) { const a = Game.party[st.swapFrom]; Game.party[st.swapFrom] = m; Game.party[c] = a; }
+        st.swapFrom = -1; st.msg = baseMsg(); continue;
       }
-      if (mode === 'item' || mode === 'select' || mode === 'tm') { s.close(); return idx; }
-      const menuItems = mode === 'field' ? ['SUMMARY', 'SWITCH', 'CANCEL'] : ['SHIFT', 'SUMMARY', 'CANCEL'];
-      msg = `Do what with ${mon.name}?`;
-      const r = await choose(menuItems, { x: W - 90, bottom: 158, w: 88 });
-      msg = mode === 'forced' ? 'Choose a POKéMON.' : 'Choose a POKéMON.';
-      const act = menuItems[r];
-      if (act === 'SUMMARY') { await openSummary(idx); }
-      else if (act === 'SWITCH') { if (party.length > 1) { swapFrom = idx; msg = 'Move to where?'; } }
-      else if (act === 'SHIFT') {
-        const b = opts.battle;
-        if (mon.fainted) { await say(`${mon.name} has no energy left to battle!`); continue; }
-        if (b && b.P.mon === mon) { await say(`${mon.name} is already in battle!`); continue; }
-        if (b && b.P.v.bound && mode === 'battle' && !b.P.mon.fainted && !opts.noSwitchMsg) { await say(`${b.P.mon.name} can't be switched out!`); continue; }
-        s.close(); return idx;
+      if (mode === 'select') return done(c);
+      if (mode === 'give') return done(c);
+      if (mode === 'useItem') {
+        const item = opts.item;
+        if (!medicineEffect(item, m)) { await menuMsg(S('gText_WontHaveEffect', "It won't have any effect.")); continue; }
+        if (battle) return done(c);
+        const from = m.hp;
+        Bag.remove(item, 1);
+        const res = applyMedicine(item, m);
+        if (m.hp !== from) { const to = m.hp; sfx('heal'); await animPartyHP(m, from, st); m.hp = to; }
+        await menuMsg(res);
+        return done(c);
+      }
+      // action menu
+      const acts = [];
+      if (mode === 'battle' || mode === 'forced') acts.push(['SHIFT', S('gText_Shift', 'SHIFT')], ['SUMMARY', S('gText_Summary5', 'SUMMARY')], ['CANCEL', S('gFameCheckerText_Cancel', 'CANCEL')]);
+      else acts.push(['SUMMARY', S('gText_Summary5', 'SUMMARY')], ['SWITCH', S('gText_Switch2', 'SWITCH')], ['ITEM', S('gText_Item', 'ITEM')], ['CANCEL', S('gFameCheckerText_Cancel', 'CANCEL')]);
+      st.msg = S('gText_DoWhatWithPokemon', 'Do what with this {PKMN}?'); st.msgW = 16;
+      const na = acts.length;
+      const r = await stdMenu(acts.map(a => a[1]), { tx: 19, ty: 19 - na * 2, tw: 10, th: na * 2 });
+      const act = r < 0 ? 'CANCEL' : acts[r][0];
+      st.msg = baseMsg(); st.msgW = 16;
+      if (act === 'SUMMARY') { scr.close(); await openSummary(Game.party, c, {}).then(i => { st.cursor = i; }); scr.open(); }
+      else if (act === 'SWITCH') { if (n > 1) { st.swapFrom = c; st.msg = S('gText_MoveToWhere', 'Move to where?'); } }
+      else if (act === 'ITEM') {
+        const r2 = await stdMenu([S('gOtherText_Give', 'GIVE'), S('gPCText_Take', 'TAKE'), S('gFameCheckerText_Cancel', 'CANCEL')], { tx: 23, ty: 13, tw: 6, th: 6 });
+        if (r2 === 0) {
+          scr.close(); const res = await openBag('give'); scr.open();
+          if (res && res.item) {
+            const it = res.item;
+            if (m.item) { Bag.add(m.item, 1); }
+            m.item = it; Bag.remove(it, 1);
+            await menuMsg(expandText(`${m.name} was given the\n${ITEMS[it].n} to hold.`));
+          }
+        } else if (r2 === 1) {
+          if (!m.item) await menuMsg(S('gText_PkmnNotHolding', "{STR_VAR_1} isn't holding\nanything.", { STR_VAR_1: m.name }));
+          else { const it = m.item; Bag.add(it, 1); m.item = null; await menuMsg(S('gText_ReceivedItemFromPkmn', 'Received the {STR_VAR_2}\nfrom {STR_VAR_1}.', { STR_VAR_1: m.name, STR_VAR_2: ITEMS[it].n })); }
+        }
+      } else if (act === 'SHIFT') {
+        if (m.hp <= 0) { await menuMsg(S('gText_PkmnHasNoEnergy', '{STR_VAR_1} has no energy\nleft to battle!', { STR_VAR_1: m.name })); continue; }
+        if (battle && c === battle.P.idx) { await menuMsg(S('gText_PkmnAlreadyInBattle', '{STR_VAR_1} is already\nin battle!', { STR_VAR_1: m.name })); continue; }
+        return done(c);
       }
     }
-  }
-}
-function drawPartySlot(m, i, sel, swap, mode, opts) {
-  const fainted = m.fainted;
-  let bg = fainted ? '#d86868' : '#48a0d0', inner = fainted ? '#f0b0a8' : '#a8d8f0';
-  if (sel) { bg = '#f89838'; inner = '#f8e0a0'; }
-  if (swap) { bg = '#d8a028'; inner = '#f8f0a0'; }
-  const bob = sel && Math.floor(G.frame / 12) % 2;
-  if (i === 0) {
-    roundRect(4, 20, 88, 60, 6, '#283848'); roundRect(5, 21, 86, 58, 6, bg); roundRect(7, 23, 82, 54, 5, inner);
-    monIcon(m.id, 8, 22, bob);
-    text(m.name, 40, 26, '#f8f8f8', '#505050', 10);
-    genderSym(m.gender, 40 + textW(m.name, 10) + 2, 25);
-    text('Lv' + m.level, 44, 40, '#f8f8f8', '#505050', 10);
-    drawStatus(m.status, 64, 42);
-    drawHPBar(34, 58, 50, m.hp, m.stats.hp);
-    text(`${m.hp}/ ${m.stats.hp}`, 84, 63, '#f8f8f8', '#505050', 9, 'right');
-    if (mode === 'tm') text(opts.canLearn(m) ? 'ABLE' : 'NOT ABLE', 50, 40, '#f8f8f8', '#505050', 10);
-  } else {
-    const y = 6 + (i - 1) * 24;
-    roundRect(96, y, 140, 22, 5, '#283848'); roundRect(97, y + 1, 138, 20, 5, bg); roundRect(98, y + 2, 136, 18, 4, inner);
-    ctx.drawImage(getMonSprite(m.id), 96, y - 6 - (bob ? 1 : 0), 28, 28);
-    text(m.name, 126, y + 1, '#f8f8f8', '#505050', 10);
-    genderSym(m.gender, 126 + textW(m.name, 10) + 2, y);
-    if (mode === 'tm') text(opts.canLearn(m) ? 'ABLE' : 'NOT ABLE', 130, y + 11, '#f8f8f8', '#505050', 8);
-    else { text('Lv' + m.level, 130, y + 11, '#f8f8f8', '#505050', 8); drawStatus(m.status, 150, y + 12); }
-    drawHPBar(190, y + 5, 42, m.hp, m.stats.hp);
-    text(`${m.hp}/ ${m.stats.hp}`, 232, y + 10, '#f8f8f8', '#505050', 8, 'right');
   }
 }
 
-// ---------------- SUMMARY ----------------
-async function openSummary(idx, list = Game.party) {
-  let page = 0, moveSel = -1;
-  const pages = ['POKéMON INFO', 'POKéMON SKILLS', 'KNOWN MOVES'];
-  const s = new Screen(() => {
-    const m = list[idx];
-    rect(0, 0, W, H, '#f8f0d0');
-    rect(0, 0, W, 16, '#d85848'); text(pages[page], 6, 2, '#f8f8f8', '#904030', 10);
-    pages.forEach((_, i) => roundRect(170 + i * 22, 5, 16, 6, 3, i === page ? '#f8f8f8' : '#904030'));
-    // left panel
-    rect(0, 16, 90, 144, '#e8d8a8');
-    drawMon(m.id, false, 12, 30, {});
-    text(m.name, 8, 18, '#404040', '#d0c8a8', 10);
-    genderSym(m.gender, 12 + textW(m.name, 10), 17);
-    text('Lv' + m.level, 8, 100, '#404040', '#d0c8a8', 10);
-    drawStatus(m.status, 50, 102);
-    drawPokeball(80, 106, 0.8);
-    const R = (lbl, val, y, x = 96) => { text(lbl, x, y, '#f8f8f8', '#707070', 9); text(String(val), x + 58, y, '#404040', '#d0c8a8', 10); };
-    if (page === 0) {
-      rect(92, 18, 146, 94, '#f8f8f0');
-      R('No.', String(m.id).padStart(3, '0'), 22);
-      R('NAME', m.sp.name, 36);
-      text('TYPE', 96, 50, '#f8f8f8', '#707070', 9);
-      m.types.forEach((t, i) => { roundRect(154 + i * 38, 51, 34, 11, 2, TYPE_COLORS[t]); text(t.toUpperCase(), 171 + i * 38, 51, '#fff', '#555', 8, 'center'); });
-      R('OT', m.otName, 64);
-      R('IDNo.', String(m.otId % 65536).padStart(5, '0'), 78);
-      R('ITEM', 'NONE', 92);
-      rect(92, 114, 146, 44, '#f8f8f0');
-      text('TRAINER MEMO', 96, 114, '#d85848', null, 9);
-      text(`${m.natureName} nature,`, 96, 126, '#404040', '#d0c8a8', 10);
-      text(`met at Lv${m.metLevel}${m.metMap ? ', ' + m.metMap : ''}.`, 96, 139, '#404040', '#d0c8a8', 9);
-    } else if (page === 1) {
-      rect(92, 18, 146, 140, '#f8f8f0');
-      const nat = NATURES[m.nature];
-      text('HP', 96, 22, '#f8f8f8', '#707070', 9);
-      text(`${m.hp}/${m.stats.hp}`, 232, 22, '#404040', '#d0c8a8', 10, 'right');
-      drawHPBar(170, 36, 60, m.hp, m.stats.hp);
-      ['atk', 'def', 'spa', 'spd', 'spe'].forEach((k, i) => {
-        const col = nat[1] === k ? '#e05040' : nat[2] === k ? '#4060e0' : '#f8f8f8';
-        text(STAT_NAMES[k], 96, 44 + i * 13, col, '#707070', 9);
-        text(String(m.stats[k]), 232, 44 + i * 13, '#404040', '#d0c8a8', 10, 'right');
-      });
-      text('EXP. POINTS', 96, 112, '#f8f8f8', '#707070', 9);
-      text(String(m.exp), 232, 112, '#404040', '#d0c8a8', 10, 'right');
-      text('NEXT LV.', 96, 124, '#f8f8f8', '#707070', 9);
-      text(String(m.expForNext() - m.exp), 232, 124, '#404040', '#d0c8a8', 10, 'right');
-      const f = clamp((m.exp - m.expThisLevel()) / (m.expForNext() - m.expThisLevel()), 0, 1);
-      rect(130, 138, 100, 3, '#506058'); rect(130, 138, Math.floor(100 * f), 3, '#48a8f8');
-      text('ABILITY', 96, 144, '#f8f8f8', '#707070', 9); text(m.ability, 150, 144, '#404040', '#d0c8a8', 9);
+// ============================================================
+//  SUMMARY (pokemon_summary_screen.c)
+// ============================================================
+const SUM_COL = TC.DARK_GRAY, SUM_HEAD = TC.WHITE;
+const PP_COLORS = [TC.DARK_GRAY, ['#e0a000', '#f8e070'], ['#e06000', '#f8b870'], ['#d01010', '#f8a0a0']];
+function ppColor(cur, max) {
+  if (cur === max) return PP_COLORS[0];
+  if (cur === 0) return PP_COLORS[3];
+  if (max === 3) return cur === 2 ? PP_COLORS[2] : PP_COLORS[1];
+  if (max === 2) return PP_COLORS[1];
+  return cur <= Math.floor(max / 4) ? PP_COLORS[2] : cur <= Math.floor(max / 2) ? PP_COLORS[1] : PP_COLORS[0];
+}
+// o.forget: new move id (forget-move mode, starts on move detail page); returns index (or chosen move slot)
+async function openSummary(list, idx, o = {}) {
+  const st = { idx, page: o.forget ? 3 : 0, move: 0 };
+  const pages = ['info', 'skills', 'moves', 'moves_info'];
+  const draw = () => {
+    const m = list[st.idx];
+    drawImg(`assets/ui/summary_${pages[st.page]}.png`, 0, 0);
+    const pn = [S('gText_PokeSum_PageName_PokemonInfo', 'POKéMON INFO'), S('gText_PokeSum_PageName_PokemonSkills', 'POKéMON SKILLS'), S('gText_PokeSum_PageName_KnownMoves', 'KNOWN MOVES'), S('gText_PokeSum_PageName_KnownMoves', 'KNOWN MOVES')][st.page];
+    drawGameText(pn, 4, 1, SUM_HEAD);
+    const ctl = st.page === 0 ? S('gText_PokeSum_Controls_PageCancel', '{DPAD_RIGHT}PAGE {A_BUTTON}CANCEL') : st.page === 3 ? S('gText_PokeSum_Controls_PickSwitch', '{DPAD_UPDOWN}PICK {A_BUTTON}SWITCH') : st.page === 2 ? S('gText_PokeSum_Controls_Page', '{DPAD_LEFTRIGHT}PAGE') + ' ' + 'PICK' : S('gText_PokeSum_Controls_Page', '{DPAD_LEFTRIGHT}PAGE');
+    drawGameText(ctl, 152 + 84 - textWidth(ctl, 'small'), 0, SUM_HEAD, 'small');
+    if (st.page !== 3) drawGameText('' + m.level, 4, 18, SUM_HEAD);
+    drawGameText(m.name, 40, 18, SUM_HEAD);
+    if (!nidoranNoSym(m) && m.gender) drawGameText(genderSym(m), 105, 18, m.gender === 'M' ? TC.BLUE : TC.RED);
+    if (st.page <= 1) drawMonSprite(m.id, false, 28, 33, { shiny: m.shiny });
+    else { drawMonIcon(m.id, 8, 28, Math.floor(G.frame / 16) % 2); m.types.forEach((t, i) => drawTypeIcon(t, 48 + i * 36, 35)); }
+    if (st.page === 0) {
+      drawGameText(padL(m.id, 3, '0'), 167, 21, SUM_COL);
+      drawGameText(m.sp.name, 167, 35, SUM_COL);
+      m.types.forEach((t, i) => drawTypeIcon(t, 167 + i * 36, 51));
+      drawGameText(m.otName, 167, 65, m.otGender === 'F' ? TC.RED : TC.BLUE);
+      drawGameText(padL(m.otId & 0xFFFF, 5, '0'), 167, 80, SUM_COL);
+      drawGameText(m.item ? ITEMS[m.item].n : S('gText_PokeSum_Item_None', 'NONE'), 167, 95, SUM_COL);
+      const place = MAPSEC_NAMES[m.metLoc] || S('gText_PokeSum_ATrade', 'a trade');
+      const mine = m.otName === Game.player.name && (m.otId & 0xFFFF) === (Game.player.id & 0xFFFF);
+      const memo = mine ? Sdyn('gText_PokeSum_Met', '{DYNAMIC 0x00} nature.\\nMet in {DYNAMIC 0x02} at {LV_2} {DYNAMIC 0x01}.', [m.natureName, String(m.metLevel || 5), place])
+        : Sdyn('gText_PokeSum_MetInATrade', '{DYNAMIC 0x00} nature.\\nMet in a trade.', [m.natureName]);
+      memo.split('\n').forEach((l, i) => drawGameText(l, 8, 115 + i * 14, SUM_COL));
+    } else if (st.page === 1) {
+      drawTextRight(`${m.hp}/${m.stats.hp}`, 236, 20, SUM_COL);
+      ['atk', 'def', 'spa', 'spd', 'spe'].forEach((k, i) => drawTextRight(String(m.stats[k]), 236, 38 + i * 13, SUM_COL));
+      drawGameText(S('gText_PokeSum_ExpPoints', 'EXP. POINTS'), 74, 103, SUM_COL);
+      drawGameText(S('gText_PokeSum_NextLv', 'NEXT LV.'), 74, 116, SUM_COL);
+      drawTextRight(String(m.exp), 236, 103, SUM_COL);
+      drawTextRight(String(m.level >= 100 ? 0 : m.expForNext() - m.exp), 236, 116, SUM_COL);
+      const ab = ABILITIES[m.ability] || [m.ability, ''];
+      drawGameText(ab[0], 74, 129, SUM_COL);
+      drawGameText(expandText(ab[1]), 10, 143, SUM_COL);
     } else {
-      rect(92, 18, 146, 140, '#f8f8f0');
-      m.moves.forEach((mv, i) => {
-        const d = MOVES[mv.id], y = 22 + i * 24;
-        if (moveSel === i) roundRect(93, y - 2, 144, 23, 3, '#f8d070');
-        roundRect(96, y + 1, 34, 11, 2, TYPE_COLORS[d.t]); text(d.t.toUpperCase().slice(0, 7), 113, y + 1, '#fff', '#555', 7, 'center');
-        text(d.n, 134, y, '#404040', '#d0c8a8', 10);
-        text(`PP ${mv.pp}/${d.pp}`, 232, y + 11, '#404040', null, 9, 'right');
-      });
-      if (moveSel >= 0) {
-        const d = MOVES[m.moves[moveSel].id];
-        drawBox(92, 120, 146, 38);
-        text(`POWER ${d.p > 1 ? d.p : '---'}   ACCURACY ${d.a || '---'}`, 100, 126, '#404040', '#d0c8a8', 9);
-        text(d.p > 0 ? (PHYSICAL_TYPES.has(d.t) ? 'Physical move.' : 'Special move.') : 'Status move.', 100, 140, '#404040', '#d0c8a8', 9);
+      const mv = m.moves.map(x => x.id);
+      if (o.forget) mv[4] = o.forget;
+      for (let i = 0; i < (st.page === 3 ? 5 : 4); i++) {
+        const id = mv[i];
+        const y = 21 + i * 28;
+        if (i === 4 && !o.forget) { drawGameText(S('gFameCheckerText_Cancel', 'CANCEL'), 163, y, SUM_COL); continue; }
+        if (!id) { drawGameText('-', 163, y, SUM_COL); drawGameText('', 196, y + 11, SUM_COL); drawGameText('--', 208, y + 11, SUM_COL); continue; }
+        const d = MOVES[id], slot = m.moves[i];
+        const max = slot ? m.maxPP(slot) : d.pp, cur = slot ? slot.pp : d.pp;
+        drawTypeIcon(d.t, 123, y);
+        drawGameText(d.n, 163, y, SUM_COL);
+        const col = ppColor(cur, max);
+        drawGameText('', 196, y + 11, col);
+        drawTextRight(String(cur), 217, y + 11, col);
+        drawGameText('/', 218, y + 11, col);
+        drawTextRight(String(max), 236, y + 11, col);
       }
-    }
-  });
-  s.open();
-  while (true) {
-    const k = await s.key();
-    if (moveSel >= 0) {
-      const n = list[idx].moves.length;
-      if (k === 'up') moveSel = (moveSel + n - 1) % n;
-      if (k === 'down') moveSel = (moveSel + 1) % n;
-      if (k === 'b') moveSel = -1;
-      if (k === 'a' && list === Game.party && !(G.scene instanceof Battle)) {
-        // reorder moves: pick second
-        const first = moveSel;
-        const t = list[idx].moves;
-        moveSel = (first + 1) % n;
-        let chosen = true;
-        while (chosen) {
-          const k2 = await s.key();
-          if (k2 === 'up') moveSel = (moveSel + n - 1) % n;
-          else if (k2 === 'down') moveSel = (moveSel + 1) % n;
-          else if (k2 === 'a') { const tmp = t[first]; t[first] = t[moveSel]; t[moveSel] = tmp; chosen = false; }
-          else if (k2 === 'b') chosen = false;
+      if (st.page === 3) {
+        const y = 18 + st.move * 28;
+        ctx.strokeStyle = '#f84818'; ctx.lineWidth = 2; ctx.strokeRect(122, y, 116, 26); ctx.lineWidth = 1;
+        const id = mv[st.move];
+        if (id) {
+          const d = MOVES[id];
+          drawGameText(d.p > 1 ? String(d.p) : '---', 57, 57, SUM_COL);
+          drawGameText(d.a > 0 ? String(d.a) : '---', 57, 71, SUM_COL);
+          expandText(MOVE_DESC[id] || '').split('\n').forEach((l, i) => drawGameText(l, 7, 98 + i * 14, SUM_COL));
         }
       }
+    }
+  };
+  const scr = new Screen(draw);
+  await enterFull(scr);
+  Audio_.cry(list[st.idx].id);
+  const maxMove = () => o.forget ? 4 : Math.min(3, list[st.idx].moves.length - 1);
+  while (true) {
+    const k = await scr.key();
+    if (st.page === 3) {
+      if (k === 'up') { st.move = st.move > 0 ? st.move - 1 : maxMove(); sfx('select'); }
+      else if (k === 'down') { st.move = st.move < maxMove() ? st.move + 1 : 0; sfx('select'); }
+      else if (k === 'a' && o.forget) { sfx('select'); await leaveFull(scr); return st.move; }
+      else if (k === 'b') { sfx('select'); if (o.forget) { await leaveFull(scr); return -1; } st.page = 2; }
+      else if (k === 'a') { sfx('select'); st.page = 2; }
       continue;
     }
-    if (k === 'left' && page > 0) { page--; sfx('select'); }
-    else if (k === 'right' && page < 2) { page++; sfx('select'); }
-    else if (k === 'up' && idx > 0) { idx--; sfx('select'); }
-    else if (k === 'down' && idx < list.length - 1) { idx++; sfx('select'); }
-    else if (k === 'a' && page === 2) { moveSel = 0; }
-    else if (k === 'b' || (k === 'a' && page !== 2)) { if (k === 'b' || page === 0) { s.close(); return; } }
+    if (k === 'left' && st.page > 0) { st.page--; sfx('select'); }
+    else if (k === 'right' && st.page < 2) { st.page++; sfx('select'); }
+    else if (k === 'a' && st.page === 2) { st.page = 3; st.move = 0; sfx('select'); }
+    else if ((k === 'up' || k === 'down') && list.length > 1) {
+      st.idx = (st.idx + (k === 'up' ? list.length - 1 : 1)) % list.length; sfx('select'); Audio_.cry(list[st.idx].id);
+    } else if (k === 'b' || (k === 'a' && st.page !== 2)) { sfx('select'); await leaveFull(scr); return st.idx; }
   }
+}
+// battle/evolution move learning → summary in forget-move mode
+async function chooseMoveToForget(mon, newMove) {
+  const r = await openSummary([mon], 0, { forget: newMove });
+  return r;
 }
 
-// ---------------- BAG ----------------
-async function openBag(mode, battle) {
-  let pocket = openBag.pocket || 0, idx = 0, scroll = 0;
-  const items = () => Bag.list(POCKETS[pocket][0]);
-  const s = new Screen(() => {
-    rect(0, 0, W, H, '#f8d888');
-    for (let y = 0; y < H; y += 6) rect(0, y, W, 2, '#f0c870');
-    // bag graphic
-    roundRect(12, 20, 60, 70, 8, '#303030'); roundRect(14, 22, 56, 66, 7, Game.player.gender === 'F' ? '#e87890' : '#e87838');
-    roundRect(24, 14, 36, 14, 5, '#303030'); roundRect(26, 16, 32, 10, 4, '#c85820');
-    rect(20, 44, 44, 3, '#a04818');
-    drawBox(4, 94, 76, 20); text(POCKETS[pocket][1], 42, 99, '#404040', '#d0d0c8', 9, 'center');
-    for (let i = 0; i < 4; i++) roundRect(20 + i * 12, 118, 8, 4, 2, i === pocket ? '#e05030' : '#a09060');
-    // list
-    drawBox(84, 2, 154, 112);
-    const list = items().concat(['CANCEL']);
-    const vis = 6;
-    if (idx < scroll) scroll = idx; if (idx >= scroll + vis) scroll = idx - vis + 1;
-    for (let i = scroll; i < Math.min(list.length, scroll + vis); i++) {
-      const y = 10 + (i - scroll) * 17;
+// ============================================================
+//  BAG (item_menu.c / bag.c)
+// ============================================================
+const POCKETS = ['items', 'key_items', 'poke_balls'];
+const POCKET_NAMES = { items: ['gText_Items2', 'ITEMS'], key_items: ['gText_KeyItems2', 'KEY ITEMS'], poke_balls: ['gText_PokeBalls2', 'POKé BALLS'] };
+const BagState = { pocket: 0, cursor: [0, 0, 0], scroll: [0, 0, 0] };
+function drawBagScreen(st) {
+  const pk = POCKETS[BagState.pocket];
+  drawImg(Game.player.gender === 'F' ? 'assets/ui/bag_bg_f.png' : 'assets/ui/bag_bg.png', 0, 0);
+  const shake = st.shake > 0 ? [0, -2, 2, -2, 2, 0][Math.floor(st.shake / 2) % 6] : 0;
+  drawImg(Game.player.gender === 'F' ? 'assets/ui/bag_female.png' : 'assets/ui/bag_male.png', 8 + shake, 36, 0, (BagState.pocket + 1) * 64, 64, 64);
+  const name = S(...POCKET_NAMES[pk]);
+  drawGameText(name, 8 + Math.floor((72 - textWidth(name)) / 2), 9, TC.WHITE);
+  if (BagState.pocket > 0) drawGameText('', 2 + (G.frame >> 4) % 2, 9, TC.WHITE);
+  if (BagState.pocket < 2) drawGameText('', 76 - (G.frame >> 4) % 2, 9, TC.WHITE);
+  const list = st.list;
+  const cur = BagState.cursor[BagState.pocket], scroll = BagState.scroll[BagState.pocket];
+  for (let r = 0; r < 6; r++) {
+    const i = scroll + r; if (i > list.length) break;
+    const y = 8 + 2 + r * 16;
+    if (i === list.length) drawGameText(S('gText_CloseBag', 'CLOSE BAG'), 97, y, TC.DARK_GRAY);
+    else {
       const id = list[i];
-      text(id === 'CANCEL' ? 'CANCEL' : ITEMS[id].n, 100, y, '#404040', '#d0d0c8', 10);
-      if (id !== 'CANCEL' && ITEMS[id].pocket !== 'key') text('x' + Game.bag[id], 230, y, '#404040', '#d0d0c8', 10, 'right');
-      if (i === idx) cursor(90, y + 2);
+      drawGameText(ITEMS[id].n, 97, y, TC.DARK_GRAY);
+      if (pk !== 'key_items') drawTextRight('×' + padL(Bag.count(id), 3), 228, y + 2, TC.DARK_GRAY, 'small');
     }
-    // description
-    drawBox(2, 124, 236, 34);
-    const cur = list[idx];
-    const desc = cur === 'CANCEL' ? 'CLOSE BAG' : ITEMS[cur].desc;
-    wrapText(desc, 216, 9)[0].forEach((ln, i) => text(ln, 12, 130 + i * 11, '#404040', '#d0d0c8', 9));
+    if (i === cur) drawGameText('▶', 89, y, st.inMenu ? TC.LIGHT : TC.DARK_GRAY);
+  }
+  if (scroll > 0) drawGameText('', 156, 2 + (G.frame >> 4) % 2, TC.DARK_GRAY);
+  if (scroll + 6 < list.length + 1) drawGameText('', 156, 100 - (G.frame >> 4) % 2, TC.DARK_GRAY);
+  if (!st.inMenu) {
+    const id = list[cur];
+    const desc = id ? expandText(ITEMS[id].desc) : S('gText_CloseBag', 'CLOSE BAG');
+    desc.split('\n').forEach((l, i) => drawGameText(l, 40, 115 + i * 14, TC.WHITE));
+  }
+  itemIcon(list[cur] || 'RETURN', 8, 122);
+  if (st.selMsg) { drawStdFrame(6, 15, st.selW, 4); st.selMsg.split('\n').forEach((l, i) => drawGameText(l, 48, 121 + i * 16, TC.DARK_GRAY)); }
+}
+async function chooseQty(max, o = {}) {
+  let n = 1;
+  const ov = new Overlay(() => {
+    drawStdFrame(24, 15, 5, 4);
+    drawGameText('×' + padL(n, 3, '0'), 196, 125, TC.DARK_GRAY);
+    if (o.price) { drawStdFrame(18, 11, 11, 2); drawTextRight('¥' + n * o.price, 228, 89, TC.DARK_GRAY); }
   });
-  s.open();
+  ov.open();
   while (true) {
-    const list = items();
-    const k = await s.key();
-    if (k === 'left' && pocket > 0) { pocket--; idx = 0; scroll = 0; sfx('select'); }
-    else if (k === 'right' && pocket < POCKETS.length - 1) { pocket++; idx = 0; scroll = 0; sfx('select'); }
-    else if (k === 'up' && idx > 0) { idx--; sfx('select'); }
-    else if (k === 'down' && idx < list.length) { idx++; sfx('select'); }
-    else if (k === 'b' || (k === 'a' && idx === list.length)) { sfx('select'); openBag.pocket = pocket; s.close(); return null; }
-    else if (k === 'a') {
-      sfx('select');
-      const id = list[idx], it = ITEMS[id];
-      openBag.pocket = pocket;
-      if (mode === 'sell') { s.close(); return id; }
+    const k = await ov.key();
+    if (k === 'up') n = n >= max ? 1 : n + 1;
+    else if (k === 'down') n = n <= 1 ? max : n - 1;
+    else if (k === 'right') n = Math.min(max, n + 10);
+    else if (k === 'left') n = Math.max(1, n - 10);
+    else if (k === 'a') { sfx('select'); ov.close(); return n; }
+    else if (k === 'b') { sfx('select'); ov.close(); return 0; }
+    sfx('select');
+  }
+}
+// mode: field | battle | give | sell ; battle → {item,target}|null; give/sell → {item}|null
+async function openBag(mode, battle) {
+  const st = { list: [], inMenu: false, selMsg: '', selW: 14, shake: 0 };
+  const refresh = () => {
+    st.list = Bag.list(POCKETS[BagState.pocket]);
+    const p = BagState.pocket;
+    BagState.cursor[p] = Math.min(BagState.cursor[p], st.list.length);
+    BagState.scroll[p] = clamp(BagState.scroll[p], Math.max(0, BagState.cursor[p] - 5), BagState.cursor[p]);
+  };
+  refresh();
+  const scr = new Screen(() => { if (st.shake > 0) st.shake--; drawBagScreen(st); });
+  await enterFull(scr);
+  const done = async v => { await leaveFull(scr); return v; };
+  while (true) {
+    const k = await scr.key();
+    const p = BagState.pocket;
+    if (k === 'left' || k === 'right') {
+      const np = p + (k === 'left' ? -1 : 1);
+      if (np >= 0 && np < 3) { BagState.pocket = np; st.shake = 12; sfx('select'); refresh(); }
+      continue;
+    }
+    if (k === 'up' || k === 'down') {
+      const n = st.list.length + 1; let c = BagState.cursor[p];
+      c = k === 'up' ? Math.max(0, c - 1) : Math.min(n - 1, c + 1);
+      if (c !== BagState.cursor[p]) { BagState.cursor[p] = c; sfx('select'); }
+      if (c < BagState.scroll[p]) BagState.scroll[p] = c;
+      if (c > BagState.scroll[p] + 5) BagState.scroll[p] = c - 5;
+      continue;
+    }
+    if (k === 'b') { sfx('select'); return done(null); }
+    if (k !== 'a') continue;
+    sfx('select');
+    const id = st.list[BagState.cursor[p]];
+    if (!id) return done(null);
+    const it = ITEMS[id];
+    if (mode === 'give') {
+      if (it.pocket === 'key_items') { await menuMsg(S('gText_ItemCantBeHeld', "The {STR_VAR_1} can't be held.", { STR_VAR_1: it.n })); continue; }
+      return done({ item: id });
+    }
+    if (mode === 'sell') return done({ item: id });
+    // context menu
+    let acts;
+    if (mode === 'battle') acts = it.pocket === 'key_items' ? [] : [['USE', S('gOtherText_Use', 'USE')], ['CANCEL', S('gFameCheckerText_Cancel', 'CANCEL')]];
+    else if (it.pocket === 'items') acts = [['USE', S('gOtherText_Use', 'USE')], ['GIVE', S('gOtherText_Give', 'GIVE')], ['TOSS', S('gOtherText_Toss', 'TOSS')], ['CANCEL', S('gFameCheckerText_Cancel', 'CANCEL')]];
+    else if (it.pocket === 'key_items') acts = [['USE', S('gOtherText_Use', 'USE')], ['CANCEL', S('gFameCheckerText_Cancel', 'CANCEL')]];
+    else acts = [['GIVE', S('gOtherText_Give', 'GIVE')], ['TOSS', S('gOtherText_Toss', 'TOSS')], ['CANCEL', S('gFameCheckerText_Cancel', 'CANCEL')]];
+    if (!acts.length) { await menuMsg(S('gText_OakForbidsUseOfItemHere', "OAK: {PLAYER}!\nThis isn't the time to use that!")); continue; }
+    st.inMenu = true; st.selMsg = S('gText_Var1IsSelected', '{STR_VAR_1} is\nselected.', { STR_VAR_1: it.n });
+    st.selW = Math.min(15, Math.ceil((Math.max(...st.selMsg.split('\n').map(l => textWidth(l))) + 4) / 8));
+    const na = acts.length;
+    const r = await stdMenu(acts.map(a => a[1]), { tx: 22, ty: 19 - na * 2, tw: 7, th: na * 2 });
+    st.inMenu = false; st.selMsg = '';
+    const act = r < 0 ? 'CANCEL' : acts[r][0];
+    if (act === 'CANCEL') continue;
+    if (act === 'USE') {
       if (mode === 'battle') {
-        if (it.pocket === 'key' || it.pocket === 'tm' || it.escape || it.repel) { await say("OAK: {PLAYER}! This isn't the time to use that!".replace('{PLAYER}', Game.player.name), { style: 'battle' }); continue; }
-        const r = await choose(['USE', 'CANCEL'], { x: W - 70, bottom: 122, w: 66 });
-        if (r !== 0) continue;
-        if (it.ball) {
-          if (Game.party.length >= 6 && Game.box.length >= 30) { await say('The BOX is full!'); continue; }
-          s.close(); return { item: id };
+        if (it.pocket === 'poke_balls') return done({ item: id });
+        if (MEDICINE[id]) {
+          scr.close();
+          const t = await openParty('useItem', { item: id, battle });
+          scr.open();
+          if (t >= 0) return done({ item: id, target: t });
+          continue;
         }
-        const t = await openParty('item');
-        if (t < 0) continue;
-        const mon = Game.party[t];
-        if (!itemHasEffect(it, mon)) { await say('It won\'t have any effect.'); continue; }
-        s.close(); return { item: id, target: t };
+        await menuMsg(S('gText_OakForbidsUseOfItemHere', "OAK: {PLAYER}!\nThis isn't the time to use that!")); continue;
       }
-      // field
-      const opts = it.pocket === 'key' || it.pocket === 'tm' ? ['USE', 'CANCEL'] : ['USE', 'TOSS', 'CANCEL'];
-      const r = await choose(opts, { x: W - 70, bottom: 122, w: 66 });
-      if (opts[r] === 'USE') {
-        const res = await useItemField(id);
-        if (res === 'close') { s.close(); return 'close'; }
-      } else if (opts[r] === 'TOSS') {
-        const n = await chooseQty(Game.bag[id], 0);
-        if (n > 0 && await yesNo(`Throw away ${n} of this item?`)) { Bag.remove(id, n); await say(`Threw away ${n} ${it.n}.`); }
+      const r2 = await useItemField(id, scr);
+      if (r2 === 'close') return done('close');
+      refresh();
+    } else if (act === 'GIVE') {
+      scr.close();
+      const t = await openParty('give');
+      scr.open();
+      if (t >= 0) {
+        const m = Game.party[t];
+        if (m.item) Bag.add(m.item, 1);
+        m.item = id; Bag.remove(id, 1); refresh();
+        await menuMsg(expandText(`${m.name} was given the\n${it.n} to hold.`));
       }
-      if (idx > items().length) idx = items().length;
+    } else if (act === 'TOSS') {
+      MsgBox.show(S('gText_TossOutHowManyStrVar1s', 'Toss out how many\n{STR_VAR_1}(s)?', { STR_VAR_1: it.n })); await MsgBox.waitPrinted();
+      const q = Bag.count(id) > 1 ? await chooseQty(Bag.count(id)) : 1;
+      MsgBox.close();
+      if (!q) continue;
+      if (await menuYesNo(S('gText_ThrowAwayStrVar2OfThisItemQM', 'Throw away {STR_VAR_2} of\nthis item?', { STR_VAR_2: String(q) }))) {
+        Bag.remove(id, q); refresh();
+        await menuMsg(S('gText_ThrewAwayStrVar2StrVar1s', 'Threw away {STR_VAR_2}\n{STR_VAR_1}(s).', { STR_VAR_1: it.n, STR_VAR_2: String(q) }));
+      }
     }
   }
 }
-function itemHasEffect(it, mon) {
-  if (it.heal) return !mon.fainted && mon.hp < mon.stats.hp;
-  if (it.cure) return it.cure.includes(mon.status);
-  return false;
-}
-async function useItemField(id) {
+async function useItemField(id, scr) {
   const it = ITEMS[id];
-  const oak = () => say(`OAK: ${Game.player.name}! This isn't the time to use that!`);
-  if (it.heal || it.cure) {
-    while (Bag.count(id) > 0) {
-      const t = await openParty('item');
-      if (t < 0) return;
-      const mon = Game.party[t];
-      if (!itemHasEffect(it, mon)) { await say("It won't have any effect."); continue; }
-      Bag.remove(id, 1);
-      if (it.heal) {
-        const before = mon.hp; mon.hp = Math.min(mon.stats.hp, mon.hp + it.heal); sfx('heal');
-        await say(`${mon.name}'s HP was restored by ${mon.hp - before} point(s).`);
-      } else { mon.status = null; mon.sleep = 0; await say(`${mon.name} was cured.`); }
-      return;
-    }
-    return;
-  }
-  if (it.repel) {
-    if (Game.repel > 0) { await say('But the effects of a REPEL lingered from earlier.'); return; }
-    Bag.remove(id, 1); Game.repel = it.repel; await say(`${Game.player.name} used the REPEL.`); return 'close';
-  }
-  if (it.escape) {
-    if (!World.map.dungeon) return oak();
-    Bag.remove(id, 1);
-    await say(`${Game.player.name} used the ESCAPE ROPE.`);
-    const e = Game.lastEscape || { map: 'viridian', x: 6, y: 16, dir: 0 };
-    G.ui.filter(u => u instanceof Screen).forEach(u => u.close());
-    await warpTo(e.map, e.x, e.y, e.dir);
-    return 'close';
-  }
-  if (it.tm) {
-    const mv = MOVES[it.tm];
-    await say(`Booted up a TM.\fIt contained ${mv.n}.`);
-    if (!await yesNo(`Teach ${mv.n} to a POKéMON?`)) return;
-    const compat = TM_COMPAT[id] || [];
-    const t = await openParty('tm', { canLearn: m => compat.includes(m.id) });
-    if (t < 0) return;
-    const mon = Game.party[t];
-    if (!compat.includes(mon.id)) { await say(`${mon.name} can't learn ${mv.n}.`); return; }
-    if (mon.hasMove(it.tm)) { await say(`${mon.name} already knows ${mv.n}.`); return; }
-    await learnMove(mon, it.tm, t2 => say(t2));
+  if (MEDICINE[id]) { scr.close(); await openParty('useItem', { item: id }); scr.open(); return; }
+  if (/REPEL/.test(id)) {
+    if (Game.repel > 0) { await menuMsg(expandText("The effects of the REPEL\nlingered from earlier.")); return; }
+    Game.repel = { REPEL: 100, SUPER_REPEL: 200, MAX_REPEL: 250 }[id] || 100; Bag.remove(id, 1);
+    await menuMsg(S('gText_UsedVar2WildRepelled', '{PLAYER} used the\n{STR_VAR_2}.\pWild POKéMON will be repelled.', { STR_VAR_2: it.n }));
     return;
   }
   if (id === 'TOWN_MAP') { await townMap(); return; }
-  return oak();
-}
-async function chooseQty(max, price) {
-  let n = 1;
-  const s = new Screen(() => {
-    drawBox(W - 90, 88, 88, 24);
-    text('x' + String(n).padStart(2, '0'), W - 80, 94, '#404040', '#d0d0c8', 10);
-    if (price) text(MONEY + (n * price), W - 10, 94, '#404040', '#d0d0c8', 10, 'right');
-  });
-  s.opaque = false; s.open();
-  while (true) {
-    const k = await s.key();
-    if (k === 'up') n = n >= max ? 1 : n + 1;
-    if (k === 'down') n = n <= 1 ? max : n - 1;
-    if (k === 'right') n = Math.min(max, n + 10);
-    if (k === 'left') n = Math.max(1, n - 10);
-    if (k === 'a') { s.close(); return n; }
-    if (k === 'b') { s.close(); return 0; }
-  }
+  await menuMsg(S('gText_OakForbidsUseOfItemHere', "OAK: {PLAYER}!\nThis isn't the time to use that!"));
 }
 async function townMap() {
-  const places = [['PALLET TOWN', 60, 120], ['ROUTE 1', 60, 96], ['VIRIDIAN CITY', 60, 70], ['ROUTE 22', 36, 72], ['ROUTE 2', 60, 50], ['VIRIDIAN FOREST', 60, 40], ['PEWTER CITY', 60, 22]];
-  const s = new Screen(() => {
-    rect(0, 0, W, H, '#80a8e0');
-    roundRect(20, 10, 120, 140, 6, '#98d070');
-    rect(58, 20, 6, 110, '#e8d8a0'); rect(30, 70, 34, 6, '#e8d8a0');
-    places.forEach(([n, x, y]) => { rect(x - 5, y - 4, 12, 8, n.includes('ROUTE') || n.includes('FOREST') ? '#e8d8a0' : '#e05040'); });
-    const cur = places.find(p => p[0] === World.map.name) || places[0];
-    if (Math.floor(G.frame / 15) % 2) drawChar(Game.player.gender === 'F' ? 'leaf' : 'red', 0, 0, cur[1] - 7, cur[2] - 10);
-    drawBox(146, 10, 90, 30); text(World.map.name, 191, 19, '#404040', '#d0d0c8', 9, 'center');
-    text('B: CLOSE', 191, 140, '#f8f8f8', '#404040', 9, 'center');
+  const scr = new Screen(() => {
+    rect(0, 0, W, H, '#306090');
+    drawStdFrame(1, 1, 28, 2);
+    drawGameText(MAPSEC_NAMES[Field.map.mapsec] || '', 12, 9, TC.DARK_GRAY);
   });
-  s.open();
-  while ((await s.key()) !== 'b') { }
-  s.close();
+  await enterFull(scr); await scr.key(); await leaveFull(scr);
 }
 
-// ---------------- POKEDEX ----------------
+// ============================================================
+//  POKéDEX (simplified list + original entry text)
+// ============================================================
 async function openDex() {
-  const maxId = Math.max(1, ...Object.keys(Game.dex.seen).map(Number));
-  const ids = []; for (let i = 1; i <= maxId; i++) ids.push(i);
-  let idx = 0, scroll = 0;
-  const seenN = Object.keys(Game.dex.seen).length, ownN = Object.keys(Game.dex.caught).length;
-  const s = new Screen(() => {
-    rect(0, 0, W, H, '#c83838');
-    rect(0, 0, W, 16, '#982020'); text('POKéDEX', 6, 2, '#f8f8f8', '#602020', 10);
-    text(`SEEN ${seenN}   OWN ${ownN}`, 234, 2, '#f8f8f8', '#602020', 9, 'right');
-    roundRect(4, 20, 110, 136, 6, '#f8f8f8');
-    const id = ids[idx];
-    if (Game.dex.seen[id]) drawMon(id, false, 27, 40, {}); else { ctx.globalAlpha = 0.25; drawMon(id, false, 27, 40, {}); ctx.globalAlpha = 1; }
-    roundRect(120, 20, 116, 136, 6, '#f8f0e0');
-    const vis = 9;
-    if (idx < scroll) scroll = idx; if (idx >= scroll + vis) scroll = idx - vis + 1;
-    for (let i = scroll; i < Math.min(ids.length, scroll + vis); i++) {
-      const y = 24 + (i - scroll) * 14, d = ids[i];
-      if (i === idx) roundRect(122, y - 1, 112, 14, 3, '#f8d070');
-      text(String(d).padStart(3, '0'), 132, y, '#404040', null, 9);
-      if (Game.dex.caught[d]) drawPokeball(127, y + 6, 0.6);
-      text(Game.dex.seen[d] ? SPECIES[d].name : '----------', 156, y, '#404040', null, 9);
+  const ids = []; for (let i = 1; i <= 151; i++) ids.push(i);
+  const last = Math.max(1, ...Object.keys(Game.dex.seen).map(Number));
+  const list = ids.filter(i => i <= last);
+  let cur = 0, scroll = 0;
+  const scr = new Screen(() => {
+    rect(0, 0, W, H, '#f8f8f8');
+    rect(0, 0, W, 16, '#e83838');
+    drawGameText(S('gText_PokedexTableOfContents', 'POKéDEX   TABLE OF CONTENTS').replace(/TABLE OF CONTENTS/, ''), 8, 1, TC.WHITE);
+    drawGameText(`SEEN ${Object.keys(Game.dex.seen).length}  OWN ${Object.keys(Game.dex.caught).length}`, 120, 1, TC.WHITE);
+    for (let r = 0; r < 8; r++) {
+      const i = scroll + r; if (i >= list.length) break;
+      const id = list[i], seen = Game.dex.seen[id], own = Game.dex.caught[id];
+      const y = 20 + r * 16;
+      if (own) drawImg('assets/ui/menu_info.png', 104, y + 2, 0, 0, 12, 12);
+      drawGameText(`No${padL(id, 3, '0')}`, 120, y, TC.DARK_GRAY);
+      drawGameText(seen ? SPECIES[id].name : '----------', 160, y, TC.DARK_GRAY);
+      if (i === cur) drawGameText('▶', 112, y, TC.DARK_GRAY);
     }
+    const id = list[cur];
+    if (Game.dex.seen[id]) drawMonSprite(id, false, 24, 40, {});
   });
-  s.open();
+  await enterFull(scr);
   while (true) {
-    const k = await s.key();
-    if (k === 'up' && idx > 0) idx--;
-    else if (k === 'down' && idx < ids.length - 1) idx++;
-    else if (k === 'left') idx = Math.max(0, idx - 9);
-    else if (k === 'right') idx = Math.min(ids.length - 1, idx + 9);
-    else if (k === 'b') { s.close(); return; }
-    else if (k === 'a' && Game.dex.seen[ids[idx]]) await dexEntry(ids[idx]);
+    const k = await scr.key();
+    if (k === 'up' && cur > 0) cur--;
+    else if (k === 'down' && cur < list.length - 1) cur++;
+    else if (k === 'left') cur = Math.max(0, cur - 8);
+    else if (k === 'right') cur = Math.min(list.length - 1, cur + 8);
+    else if (k === 'a' && Game.dex.seen[list[cur]]) { sfx('select'); scr.close(); await dexEntry(list[cur]); scr.open(); }
+    else if (k === 'b') { sfx('select'); break; }
+    if (cur < scroll) scroll = cur; if (cur > scroll + 7) scroll = cur - 7;
   }
+  await leaveFull(scr);
 }
-async function dexEntry(id) {
+async function dexEntry(id, fromCatch) {
   const sp = SPECIES[id];
-  const s = new Screen(() => {
-    rect(0, 0, W, H, '#f8f0e0');
-    rect(0, 0, W, 16, '#c83838'); text('POKéDEX ENTRY', 6, 2, '#f8f8f8', '#602020', 10);
-    roundRect(8, 22, 80, 80, 6, '#f8f8f8'); drawMon(id, false, 16, 30, {});
-    text(`No.${String(id).padStart(3, '0')}  ${sp.name}`, 98, 26, '#404040', '#d0c8b0', 11);
-    text(`${sp.cat} POKéMON`, 98, 42, '#404040', '#d0c8b0', 10);
-    sp.types.forEach((t, i) => { roundRect(98 + i * 40, 58, 36, 12, 2, TYPE_COLORS[t]); text(t.toUpperCase(), 116 + i * 40, 58, '#fff', '#555', 8, 'center'); });
-    const caught = Game.dex.caught[id];
-    text(`HT  ${caught ? sp.ht.toFixed(1) + ' m' : '??? m'}`, 98, 78, '#404040', '#d0c8b0', 10);
-    text(`WT  ${caught ? sp.wt.toFixed(1) + ' kg' : '???.? kg'}`, 98, 92, '#404040', '#d0c8b0', 10);
-    drawBox(4, 110, 232, 46);
-    text(caught ? `Base stats  HP ${sp.b[0]}  ATK ${sp.b[1]}  DEF ${sp.b[2]}` : 'Catch it to learn more!', 14, 118, '#404040', '#d0d0c8', 9);
-    if (caught) text(`SP.ATK ${sp.b[3]}  SP.DEF ${sp.b[4]}  SPEED ${sp.b[5]}`, 14, 132, '#404040', '#d0d0c8', 9);
+  const own = Game.dex.caught[id];
+  const scr = new Screen(() => {
+    rect(0, 0, W, H, '#f8f8f8');
+    rect(0, 0, W, 16, '#e83838');
+    drawGameText('POKéDEX', 8, 1, TC.WHITE);
+    drawStdFrame(1, 3, 10, 8);
+    drawMonSprite(id, false, 16, 24, {});
+    drawGameText(`No${padL(id, 3, '0')}`, 104, 24, TC.DARK_GRAY);
+    drawGameText(sp.name, 152, 24, TC.DARK_GRAY);
+    drawGameText(`${sp.cat} POKéMON`, 104, 40, TC.DARK_GRAY);
+    const ft = Math.round(sp.ht * 39.37), lb = (sp.wt * 2.2046).toFixed(1);
+    drawGameText('HT', 104, 58, TC.DARK_GRAY); drawGameText(own ? `${Math.floor(ft / 12)}'${padL(ft % 12, 2, '0')}"` : `??'??"`, 144, 58, TC.DARK_GRAY);
+    drawGameText('WT', 104, 74, TC.DARK_GRAY); drawGameText(own ? `${lb} lbs.` : '????.? lbs.', 144, 74, TC.DARK_GRAY);
+    rect(0, 100, W, 60, '#f8f8f8');
+    if (own) expandText(sp.dex).split('\n').forEach((l, i) => drawGameText(l, 8, 104 + i * 16, TC.DARK_GRAY));
   });
-  s.open();
-  while (!['a', 'b'].includes(await s.key())) { }
-  s.close();
+  await enterFull(scr);
+  Audio_.cry(id);
+  await scr.key();
+  await leaveFull(scr);
 }
 
-// ---------------- TRAINER CARD ----------------
+// ============================================================
+//  TRAINER CARD (trainer_card.c, FRLG positions)
+// ============================================================
 async function trainerCard() {
-  const s = new Screen(() => {
-    menuBg('#305878', '#386888');
-    roundRect(12, 12, 216, 136, 8, '#303030'); roundRect(14, 14, 212, 132, 7, '#f8d0a0'); roundRect(18, 30, 204, 76, 4, '#f8f0e0');
-    text('TRAINER CARD', 22, 16, '#704020', null, 10);
-    text(`IDNo. ${String(Game.player.id % 65536).padStart(5, '0')}`, 218, 16, '#704020', null, 10, 'right');
-    text(`NAME: ${Game.player.name}`, 26, 36, '#404040', '#d0c8b0', 10);
-    text(`MONEY  ${MONEY}${Game.player.money}`, 26, 56, '#404040', '#d0c8b0', 10);
-    text(`POKéDEX  ${flag('pokedex') ? Object.keys(Game.dex.caught).length : 0}`, 26, 72, '#404040', '#d0c8b0', 10);
-    const t = Math.floor(Game.time / 60);
-    text(`TIME  ${Math.floor(t / 3600)}:${String(Math.floor(t / 60) % 60).padStart(2, '0')}`, 26, 88, '#404040', '#d0c8b0', 10);
-    drawChar(Game.player.gender === 'F' ? 'leaf' : 'red', 0, 0, 168, 48, 3);
-    text('BADGES', 22, 110, '#704020', null, 9);
-    for (let i = 0; i < 8; i++) {
-      const x = 30 + i * 24, y = 128;
-      ctx.fillStyle = '#c0a080'; ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill();
-      if (i === 0 && Game.player.badges.includes('BOULDER')) {
-        ctx.fillStyle = '#707880'; ctx.beginPath(); ctx.moveTo(x, y - 8); ctx.lineTo(x + 8, y); ctx.lineTo(x, y + 8); ctx.lineTo(x - 8, y); ctx.fill();
-        ctx.fillStyle = '#b0b8c0'; ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x + 5, y); ctx.lineTo(x, y); ctx.fill();
-      }
-    }
+  const stars = 0;
+  const card = ['blue', 'green', 'bronze', 'silver', 'gold'][stars];
+  const pic = Game.player.gender === 'F' ? 'assets/trainers/front/leaf.png' : 'assets/trainers/front/red.png';
+  const scr = new Screen(() => {
+    drawImg(`assets/ui/card_${card}.png`, 0, 0);
+    const X = 8, Y = 8;
+    drawGameText(S('gText_TrainerCardName', 'NAME: ') + Game.player.name, X + 16, Y + 25, TC.DARK_GRAY);
+    drawGameText(S('gText_TrainerCardIDNo', 'IDNo.') + padL(Game.player.id & 0xFFFF, 5, '0'), X + 128, Y + 1, TC.DARK_GRAY);
+    drawGameText(S('gText_TrainerCardMoney', 'MONEY'), X + 16, Y + 49, TC.DARK_GRAY);
+    drawTextRight('¥' + Game.player.money, X + 132, Y + 49, TC.DARK_GRAY);
+    if (VM.flag('FLAG_SYS_POKEDEX_GET')) { drawGameText(S('gText_TrainerCardPokedex', 'POKéDEX'), X + 16, Y + 65, TC.DARK_GRAY); drawTextRight(String(Object.keys(Game.dex.caught).length), X + 132, Y + 65, TC.DARK_GRAY); }
+    drawGameText(S('gText_TrainerCardTime', 'TIME'), X + 16, Y + 81, TC.DARK_GRAY);
+    drawTextRight(playTimeStr(), X + 132, Y + 81, TC.DARK_GRAY);
+    drawImg(pic, 160, 40, 0, 0, 64, 64);
   });
-  s.open();
-  while (!['a', 'b'].includes(await s.key())) { }
-  s.close();
+  await enterFull(scr); await scr.key(); sfx('select'); await leaveFull(scr);
 }
 
-// ---------------- SAVE / OPTIONS ----------------
+// ============================================================
+//  SAVE (start_menu.c save dialog + save stats window)
+// ============================================================
+function drawSaveStats() {
+  drawStdFrame(1, 1, 14, VM.flag('FLAG_SYS_POKEDEX_GET') ? 9 : 7);
+  const loc = MAPSEC_NAMES[Field.map.mapsec] || '';
+  drawGameText(loc, 8 + Math.floor((112 - textWidth(loc)) / 2), 8, TC.GREEN);
+  const row = (name, val, y) => { drawGameText(name, 10, 8 + y, TC.DARK_GRAY, 'small'); drawGameText(val, 68, 8 + y, TC.BLUE, 'small'); };
+  row(S('gSaveStatName_Player', 'PLAYER'), Game.player.name, 14);
+  row(S('gSaveStatName_Badges', 'BADGES'), String(badgeCount()), 28);
+  let y = 42;
+  if (VM.flag('FLAG_SYS_POKEDEX_GET')) { row(S('gSaveStatName_Pokedex', 'POKéDEX'), String(Object.keys(Game.dex.caught).length), 42); y = 56; }
+  row(S('gSaveStatName_Time', 'TIME'), playTimeStr(), y);
+}
 async function saveMenu() {
-  const info = new Screen(() => {
-    drawBox(2, 2, 130, 72);
-    text(World.map.name, 10, 8, '#e05030', null, 10);
-    text(`PLAYER   ${Game.player.name}`, 10, 24, '#404040', '#d0d0c8', 9);
-    text(`BADGES   ${Game.player.badges.length}`, 10, 36, '#404040', '#d0d0c8', 9);
-    text(`POKéDEX  ${Object.keys(Game.dex.caught).length}`, 10, 48, '#404040', '#d0d0c8', 9);
-    const t = Math.floor(Game.time / 60);
-    text(`TIME     ${Math.floor(t / 3600)}:${String(Math.floor(t / 60) % 60).padStart(2, '0')}`, 10, 60, '#404040', '#d0d0c8', 9);
-  });
-  info.opaque = false; info.open();
-  const yes = await yesNo('Would you like to save the game?');
-  if (yes) {
-    if (localStorage.getItem(SAVE_KEY) && !await yesNo('There is already a saved file. Is it okay to overwrite it?')) { info.close(); return; }
-    await say('SAVING...\nDON\'T TURN OFF THE POWER.', { auto: 30 });
-    saveGame();
-    sfx('save');
-    await say(`${Game.player.name} saved the game.`);
-  }
-  info.close();
-  return yes ? 'close' : undefined;
-}
-async function optionMenu() {
-  let idx = 0;
-  const s = new Screen(() => {
-    menuBg('#586878', '#607080');
-    drawBox(10, 10, 220, 24); text('OPTION', 20, 16, '#404040', '#d0d0c8', 11);
-    drawBox(10, 38, 220, 80);
-    const rows = [['TEXT SPEED', ['SLOW', 'MID', 'FAST'], G.options.textSpeed - 1], ['SOUND', ['OFF', 'ON'], G.options.sound ? 1 : 0], ['CANCEL', [], 0]];
-    rows.forEach(([lbl, vals, cur], i) => {
-      const y = 46 + i * 20;
-      text(lbl, 28, y, '#404040', '#d0d0c8', 10);
-      vals.forEach((v, j) => text(v, 120 + j * 36, y, j === cur ? '#e05030' : '#404040', '#d0d0c8', 10));
-      if (i === idx) cursor(18, y + 2);
-    });
-  });
-  s.open();
-  while (true) {
-    const k = await s.key();
-    if (k === 'up' && idx > 0) idx--;
-    else if (k === 'down' && idx < 2) idx++;
-    else if (k === 'left' || k === 'right') {
-      const d = k === 'left' ? -1 : 1;
-      if (idx === 0) G.options.textSpeed = clamp(G.options.textSpeed + d, 1, 3);
-      if (idx === 1) G.options.sound = !G.options.sound;
-      try { localStorage.setItem(SAVE_KEY + '_opt', JSON.stringify(G.options)); } catch (e) { }
-    }
-    else if (k === 'b' || (k === 'a' && idx === 2)) { s.close(); return; }
-  }
-}
-
-// ---------------- NAMING SCREEN ----------------
-async function nameScreen(title, maxLen, def, monId, palName) {
-  const rows = ['ABCDEFGHIJ', 'KLMNOPQRST', 'UVWXYZ .,-', 'abcdefghij', 'klmnopqrst', 'uvwxyz!?♂♀', '0123456789'];
-  let name = '', cx = 0, cy = 0;
-  const s = new Screen(() => {
-    menuBg('#5890c0', '#68a0d0');
-    drawBox(4, 4, 232, 34);
-    if (monId) ctx.drawImage(getMonSprite(monId), 8, 5, 32, 32);
-    else if (palName) drawChar(palName, 0, Math.floor(G.frame / 20) % 3, 16, 14);
-    text(title, 48, 8, '#404040', '#d0d0c8', 10);
-    for (let i = 0; i < maxLen; i++) {
-      rect(48 + i * 11, 33, 9, 1, '#707070');
-      if (name[i]) text(name[i], 52 + i * 11, 21, '#404040', '#d0d0c8', 11, 'center');
-      else if (i === name.length && Math.floor(G.frame / 16) % 2) rect(48 + i * 11, 31, 9, 2, '#e05030');
-    }
-    drawBox(4, 42, 180, 116);
-    rows.forEach((r, y) => [...r].forEach((ch, x) => {
-      const px = 16 + x * 16, py = 50 + y * 15;
-      if (cx === x && cy === y) roundRect(px - 4, py - 2, 14, 14, 3, '#f8d070');
-      text(ch, px + 3, py, '#404040', '#d0d0c8', 11, 'center');
-    }));
-    ['DEL', 'OK'].forEach((b, i) => {
-      const sel = cx === 10 && cy === i;
-      roundRect(190, 48 + i * 30, 44, 24, 4, sel ? '#f89838' : '#305060'); roundRect(192, 50 + i * 30, 40, 20, 3, sel ? '#f8d070' : '#a0b8c8');
-      text(b, 212, 54 + i * 30, '#404040', null, 10, 'center');
-    });
-    text('START', 212, 112, '#f8f8f8', '#304060', 7, 'center');
-    text('= OK', 212, 121, '#f8f8f8', '#304060', 7, 'center');
-    text('or type', 212, 136, '#f8f8f8', '#304060', 7, 'center');
-  });
-  s.open();
-  G.captureTyping = true; typedChars = [];
-  const poll = setInterval(() => {
-    while (typedChars.length) {
-      const c = typedChars.shift();
-      if (c === '\b') name = name.slice(0, -1);
-      else if (c === '\n' || c === '\r') { } else if (name.length < maxLen) name += c;
-    }
-  }, 30);
-  const finish = () => { clearInterval(poll); G.captureTyping = false; s.close(); return name.trim() || def; };
-  // Enter key finishes while typing
-  const onEnter = e => { if (e.key === 'Enter') { e.preventDefault(); Input.pressed.start = true; } };
-  addEventListener('keydown', onEnter, true);
+  const stats = new Overlay(drawSaveStats); stats.opaque = false; G.ui.push(stats);
   try {
-    while (true) {
-      const k = await s.key();
-      if (k === 'up') cy = cx === 10 ? (cy + 1) % 2 : (cy + rows.length - 1) % rows.length;
-      else if (k === 'down') cy = cx === 10 ? (cy + 1) % 2 : (cy + 1) % rows.length;
-      else if (k === 'left') { cx = cx === 0 ? 10 : cx - 1; if (cx === 10) cy = Math.min(cy, 1); }
-      else if (k === 'right') { cx = cx === 10 ? 0 : cx + 1; if (cx === 10) cy = Math.min(cy, 1); }
-      else if (k === 'b') name = name.slice(0, -1);
-      else if (k === 'start') { return finish(); }
-      else if (k === 'a') {
-        if (cx === 10) { if (cy === 0) name = name.slice(0, -1); else return finish(); }
-        else if (name.length < maxLen) { name += rows[cy][cx]; if (name.length === maxLen) { cx = 10; cy = 1; } }
-      }
-      sfx('select');
-    }
-  } finally { removeEventListener('keydown', onEnter, true); }
+    if (!await menuYesNo(S('gText_WouldYouLikeToSaveTheGame', 'Would you like to save the game?'), 23, 9)) return false;
+    if (hasSave() && !await menuYesNo(S('gText_AlreadySaveFile_WouldLikeToOverwrite', 'There is already a saved file.\nIs it okay to overwrite it?'), 23, 9)) return false;
+    MsgBox.show(S('gText_SavingDontTurnOffThePower', "SAVING…\nDON'T TURN OFF THE POWER."), { instant: true });
+    saveGame();
+    await wait(90);
+    sfx('save');
+    await menuMsg(S('gText_PlayerSavedTheGame', '{PLAYER} saved the game.'));
+    return true;
+  } finally { removeUI(stats); }
 }
 
-// ---------------- MART ----------------
-async function martScript(stock) {
-  let tb = await say('Hi, there!\nMay I help you?', { hold: true });
+// ============================================================
+//  OPTION (option_menu.c)
+// ============================================================
+async function optionMenu() {
+  const o = G.options;
+  if (o.battleScene === undefined) o.battleScene = true;
+  if (!o.battleStyle) o.battleStyle = 'SHIFT';
+  if (o.frame === undefined) o.frame = 0;
+  const rows = [
+    [S('gText_TextSpeed', 'TEXT SPEED'), ['SLOW', 'MID', 'FAST'], () => o.textSpeed - 1, v => { o.textSpeed = v + 1; }],
+    [S('gText_BattleScene', 'BATTLE SCENE'), ['ON', 'OFF'], () => o.battleScene ? 0 : 1, v => { o.battleScene = v === 0; }],
+    [S('gText_BattleStyle', 'BATTLE STYLE'), ['SHIFT', 'SET'], () => o.battleStyle === 'SET' ? 1 : 0, v => { o.battleStyle = v ? 'SET' : 'SHIFT'; }],
+    [S('gText_Sound', 'SOUND'), ['MONO', 'STEREO'], () => o.sound ? 1 : 0, v => { o.sound = !!v; }],
+    [S('gText_ButtonMode', 'BUTTON MODE'), ['HELP', 'LR', 'L=A'], () => 0, () => { }],
+    [S('gText_Frame', 'FRAME'), ['TYPE1'], () => 0, () => { }],
+    [S('gText_OptionMenuCancel', 'CANCEL'), null],
+  ];
+  let cur = 0;
+  const scr = new Screen(() => {
+    rect(0, 0, W, H, '#6890b8');
+    drawStdFrame(1, 1, 28, 2); drawGameText(S('gText_Option', 'OPTION'), 8, 9, TC.DARK_GRAY);
+    drawStdFrame(1, 5, 28, 14);
+    rows.forEach((r, i) => {
+      const y = 41 + i * 16;
+      drawGameText(r[0], 16, y, TC.DARK_GRAY);
+      if (r[1]) drawGameText(r[1][r[2]()], 136, y, TC.RED);
+      if (i === cur) drawGameText('▶', 8, y, TC.DARK_GRAY);
+    });
+  });
+  await enterFull(scr);
   while (true) {
-    const money = moneyBox();
-    const r = await choose(['BUY', 'SELL', 'SEE YA!'], { x: 2, y: 2, w: 80 });
-    money.close();
-    closeUI(tb);
+    const k = await scr.key();
+    const r = rows[cur];
+    if (k === 'up') cur = (cur + rows.length - 1) % rows.length;
+    else if (k === 'down') cur = (cur + 1) % rows.length;
+    else if ((k === 'left' || k === 'right') && r[1]) { const n = r[1].length; r[3]((r[2]() + (k === 'left' ? n - 1 : 1)) % n); }
+    else if (k === 'b' || (k === 'a' && !r[1]) || k === 'start') { sfx('select'); break; }
+    else continue;
+    sfx('select');
+  }
+  try { localStorage.setItem('frlg_options', JSON.stringify(o)); } catch (e) { }
+  await leaveFull(scr);
+}
+
+// ============================================================
+//  NAMING SCREEN (naming_screen.c keyboard pages)
+// ============================================================
+const NAME_PAGES = [
+  ['ABCDEF .', 'GHIJKL ,', 'MNOPQRS ', 'TUVWXYZ '],
+  ['abcdef .', 'ghijkl ,', 'mnopqrs ', 'tuvwxyz '],
+  ['01234   ', '56789   ', '!?♂♀/-  ', '…“”‘\'   '],
+];
+const NAME_PAGE_LABELS = ['UPPER', 'lower', 'OTHERS'];
+async function nameScreen(title, maxLen, def, monId) {
+  let name = '', page = 0, cx = 0, cy = 0; // cx 8 = side buttons column
+  const scr = new Screen(() => {
+    rect(0, 0, W, H, '#f8f0d8');
+    drawStdFrame(1, 1, 28, 4);
+    if (monId) drawMonIcon(monId, 8, 6, Math.floor(G.frame / 16) % 2);
+    else drawImg(Game.player.gender === 'F' ? 'assets/ow/LEAF.png' : 'assets/ow/RED.png', 16, 8, 0, 0, 16, 32);
+    drawGameText(title, 48, 9, TC.DARK_GRAY);
+    for (let i = 0; i < maxLen; i++) {
+      const ch = name[i];
+      if (ch) drawGameText(ch, 96 + i * 8, 25, TC.DARK_GRAY);
+      rect(96 + i * 8, 39, 6, 1, i === name.length && (G.frame >> 4) % 2 ? '#e83838' : '#707070');
+    }
+    drawStdFrame(1, 7, 20, 12);
+    drawGameText(NAME_PAGE_LABELS[page], 16, 57 - 8, TC.BLUE, 'small');
+    NAME_PAGES[page].forEach((row, y) => [...row].forEach((ch, x) => {
+      const px = 20 + x * 18, py = 68 + y * 20;
+      if (cx === x && cy === y) rect(px - 3, py - 2, 14, 17, '#f8d060');
+      drawGameText(ch, px, py, TC.DARK_GRAY);
+    }));
+    const btns = [NAME_PAGE_LABELS[(page + 1) % 3], 'BACK', 'OK'];
+    btns.forEach((b, i) => {
+      drawStdFrame(23, 8 + i * 4, 6, 2);
+      if (cx === 8 && cy === i + (i === 2 ? 1 : 0)) rect(184, 64 + i * 32, 48, 16, '#f8d060');
+      drawGameText(b, 188, 65 + i * 32, TC.DARK_GRAY);
+    });
+  });
+  await enterFull(scr);
+  const side = () => cy === 0 ? 'PAGE' : cy === 1 ? 'BACK' : 'OK';
+  while (true) {
+    const k = await scr.key();
+    if (k === 'up') cy = (cy + 3) % 4;
+    else if (k === 'down') cy = (cy + 1) % 4;
+    else if (k === 'left') cx = cx === 0 ? 8 : cx - 1;
+    else if (k === 'right') cx = cx === 8 ? 0 : cx + 1;
+    else if (k === 'select') page = (page + 1) % 3;
+    else if (k === 'b') name = name.slice(0, -1);
+    else if (k === 'start') { cx = 8; cy = 3; }
+    else if (k === 'a') {
+      if (cx === 8) {
+        const s = side();
+        if (s === 'PAGE') page = (page + 1) % 3;
+        else if (s === 'BACK') name = name.slice(0, -1);
+        else break;
+      } else if (name.length < maxLen) {
+        const ch = NAME_PAGES[page][cy][cx];
+        name += ch;
+        if (name.length === maxLen) { cx = 8; cy = 3; }
+      }
+    }
+    sfx('select');
+  }
+  sfx('select');
+  await leaveFull(scr);
+  name = name.trim();
+  return name || def;
+}
+
+// ============================================================
+//  POKé MART (shop.c)
+// ============================================================
+function drawMoneyWin() { drawStdFrame(1, 1, 10, 4); drawGameText(S('gText_TrainerCardMoney', 'MONEY'), 8, 9, TC.DARK_GRAY); drawTextRight('¥' + Game.player.money, 84, 25, TC.DARK_GRAY); }
+async function pokeMart(stock) {
+  // message (Text_MayIHelpYou) is already shown by the script; BUY / SELL / SEE YA! at top left
+  while (true) {
+    const keep = MsgBox.open;
+    const r = await stdMenu([S('gText_ShopBuy', 'BUY'), S('gText_ShopSell', 'SELL'), S('gText_ShopQuit', 'SEE YA!')], { tx: 1, ty: 1, tw: 8, th: 6 });
+    void keep;
     if (r === 0) await martBuy(stock);
     else if (r === 1) await martSell();
-    else break;
-    tb = await say('Is there anything else I can do?', { hold: true });
+    else { MsgBox.close(); return; }
+    MsgBox.show(S('gText_AnythingElseICanHelp', 'Is there anything else I can do?'), { color: TC.BLUE });
+    await MsgBox.waitPrinted();
   }
-  await say('Please come again!');
-}
-function moneyBox() {
-  const s = new Screen(() => { drawBox(W - 92, 2, 90, 30); text('MONEY', W - 84, 6, '#404040', '#d0d0c8', 9); text(MONEY + Game.player.money, W - 10, 17, '#404040', '#d0d0c8', 10, 'right'); });
-  s.opaque = false; s.update = () => { }; G.ui.push(s); return s;
 }
 async function martBuy(stock) {
-  let idx = 0;
-  const list = stock.concat(['CANCEL']);
-  const s = new Screen(() => {
-    World.draw();
-    drawBox(2, 2, 90, 30); text('MONEY', 10, 6, '#404040', '#d0d0c8', 9); text(MONEY + Game.player.money, 84, 17, '#404040', '#d0d0c8', 10, 'right');
-    drawBox(96, 2, 142, 110);
-    list.forEach((id, i) => {
-      const y = 10 + i * 13;
-      text(id === 'CANCEL' ? 'CANCEL' : ITEMS[id].n, 112, y, '#404040', '#d0d0c8', 9);
-      if (id !== 'CANCEL') text(MONEY + ITEMS[id].price, 230, y, '#404040', '#d0d0c8', 9, 'right');
-      if (i === idx) cursor(102, y + 1);
-    });
-    drawBox(2, 116, 236, 42);
-    const cur = list[idx];
-    wrapText(cur === 'CANCEL' ? 'Quit shopping.' : ITEMS[cur].desc, 216, 10)[0].forEach((ln, i) => text(ln, 12, 124 + i * 14, '#404040', '#d0d0c8', 10));
-  });
-  s.open();
-  while (true) {
-    const k = await s.key();
-    if (k === 'up' && idx > 0) idx--;
-    else if (k === 'down' && idx < list.length - 1) idx++;
-    else if (k === 'b' || (k === 'a' && idx === list.length - 1)) { s.close(); return; }
-    else if (k === 'a') {
-      const it = ITEMS[list[idx]];
-      const maxN = Math.min(99, Math.floor(Game.player.money / it.price));
-      const tb = await say(`${it.n}? Certainly.\nHow many would you like?`, { hold: true });
-      if (maxN < 1) { closeUI(tb); await say("You don't have enough money."); continue; }
-      const n = await chooseQty(maxN, it.price);
-      closeUI(tb);
-      if (!n) continue;
-      if (await yesNo(`${it.n}, and you want ${n}.\nThat will be ${MONEY}${n * it.price}. Okay?`)) {
-        Game.player.money -= n * it.price; Bag.add(it.id, n); sfx('save');
-        await say('Here you go!\nThank you very much.');
-        if (it.id === 'POKE_BALL' && n >= 10) { Bag.add('PREMIER_BALL', 1); await say("I'll throw in a PREMIER BALL, too."); }
-      }
+  MsgBox.close();
+  const list = stock.filter(id => ITEMS[id]);
+  let cur = 0, scroll = 0;
+  const scr = new Screen(() => {
+    Field.draw();
+    drawMoneyWin();
+    drawStdFrame(12, 1, 17, 12);
+    for (let r = 0; r < 6; r++) {
+      const i = scroll + r; if (i > list.length) break;
+      const y = 10 + r * 16;
+      if (i === list.length) drawGameText(S('gFameCheckerText_Cancel', 'CANCEL'), 106, y, TC.DARK_GRAY);
+      else { drawGameText(ITEMS[list[i]].n, 106, y, TC.DARK_GRAY); drawTextRight('¥' + ITEMS[list[i]].price, 228, y, TC.DARK_GRAY); }
+      if (i === cur) drawGameText('▶', 98, y, TC.DARK_GRAY);
     }
+    drawMsgFrame(false);
+    const id = list[cur];
+    if (id) { itemIcon(id, 8, 124); expandText(ITEMS[id].desc).split('\n').forEach((l, i) => drawGameText(l, 40, 115 + i * 14, TC.DARK_GRAY)); }
+    else drawGameText(S('gText_QuitShopping', 'Quit shopping.'), 40, 121, TC.DARK_GRAY);
+  });
+  scr.open();
+  while (true) {
+    const k = await scr.key();
+    if (k === 'up' && cur > 0) { cur--; sfx('select'); }
+    else if (k === 'down' && cur < list.length) { cur++; sfx('select'); }
+    else if (k === 'b' || (k === 'a' && cur === list.length)) { sfx('select'); break; }
+    else if (k === 'a') {
+      sfx('select');
+      const id = list[cur], it = ITEMS[id];
+      if (Game.player.money < it.price) { await menuMsg(S('gText_YouDontHaveMoney', "You don't have enough money."), { color: TC.BLUE }); continue; }
+      MsgBox.show(S('gText_Var1CertainlyHowMany', '{STR_VAR_1}? Certainly.\nHow many would you like?', { STR_VAR_1: it.n }), { color: TC.BLUE });
+      await MsgBox.waitPrinted();
+      const q = await chooseQty(Math.min(99, Math.floor(Game.player.money / it.price)), { price: it.price });
+      MsgBox.close();
+      if (!q) continue;
+      if (!await menuYesNo(S('gText_Var1AndYouWantedVar2', '{STR_VAR_1}, and you want {STR_VAR_2}.\nThat will be ¥{STR_VAR_3}. Okay?', { STR_VAR_1: it.n, STR_VAR_2: String(q), STR_VAR_3: String(q * it.price) }), 23, 9)) continue;
+      Game.player.money -= q * it.price; Bag.add(id, q);
+      sfx('save');
+      await menuMsg(S('gText_HereYouGoThankYou', 'Here you are!\nThank you!'), { color: TC.BLUE });
+      if (id === 'POKE_BALL' && q >= 10 && Bag.add('PREMIER_BALL', 1)) await menuMsg(expandText('I\'ll throw in a PREMIER BALL, too.'), { color: TC.BLUE });
+    }
+    if (cur < scroll) scroll = cur; if (cur > scroll + 5) scroll = cur - 5;
   }
+  scr.close();
 }
 async function martSell() {
+  MsgBox.close();
   while (true) {
-    const id = await openBag('sell');
-    if (!id) return;
-    const it = ITEMS[id];
-    if (!it.price || it.pocket === 'key' || it.pocket === 'tm') { await say(`Oh, no. I can't buy that.`); continue; }
-    const tb = await say(`${it.n}?\nHow many would you like to sell?`, { hold: true });
-    const n = await chooseQty(Game.bag[id], Math.floor(it.price / 2));
-    closeUI(tb);
-    if (!n) continue;
-    if (await yesNo(`I can pay ${MONEY}${n * Math.floor(it.price / 2)}.\nWould that be okay?`)) {
-      Bag.remove(id, n); Game.player.money += n * Math.floor(it.price / 2); sfx('save');
-      await say(`Turned over the ${it.n} and received ${MONEY}${n * Math.floor(it.price / 2)}.`);
-    }
+    const r = await openBag('sell');
+    if (!r) return;
+    const it = ITEMS[r.item];
+    if (!it.price || it.pocket === 'key_items') { await menuMsg(expandText(`${it.n}? Oh, no.\nI can't buy that.`), { color: TC.BLUE }); continue; }
+    const price = Math.floor(it.price / 2);
+    MsgBox.show(S('gText_HowManyWouldYouLikeToSell', '{STR_VAR_1}?\nHow many would you like to sell?', { STR_VAR_1: it.n }), { color: TC.BLUE }); await MsgBox.waitPrinted();
+    const q = await chooseQty(Bag.count(r.item), { price });
+    MsgBox.close();
+    if (!q) continue;
+    if (!await menuYesNo(S('gText_ICanPayThisMuch_WouldThatBeOkay', 'I can pay ¥{STR_VAR_3}.\nWould that be okay?', { STR_VAR_3: String(q * price) }), 23, 9)) continue;
+    Bag.remove(r.item, q); Game.player.money = Math.min(999999, Game.player.money + q * price);
+    sfx('save');
+    await menuMsg(S('gText_TurnedOverItemsWorthYen', 'Turned over the {STR_VAR_1}\nworth ¥{STR_VAR_3}.', { STR_VAR_1: it.n, STR_VAR_3: String(q * price) }).replace(/シSス/g, '(s)'), { color: TC.BLUE });
   }
 }
 
-// ---------------- PC ----------------
-async function pcScript() {
-  if (World.map.id === 'house2f') {
-    await say(`${Game.player.name} booted up the PC.`);
-    return playerPC();
-  }
-  await say(`${Game.player.name} booted up the PC.`);
+// ============================================================
+//  PC (player_pc.c item storage, simple box storage)
+// ============================================================
+async function playerPC() {
   while (true) {
-    const r = await ask('Which PC should be accessed?', ["SOMEONE'S PC", `${Game.player.name}'S PC`, 'LOG OFF'], { menu: { x: 2, y: 2, bottom: undefined } });
-    if (r === 0) await storagePC();
-    else if (r === 1) await playerPC();
-    else return;
+    MsgBox.show(S('gText_WhatWouldYouLikeToDo', 'What would you like to do?'), { instant: true });
+    const r = await stdMenu([S('gText_ItemStorage', 'ITEM STORAGE'), S('gText_Mailbox', 'MAILBOX'), S('gText_TurnOff', 'TURN OFF')], { tx: 1, ty: 1, tw: 10, th: 6 });
+    if (r === 0) await itemStorage();
+    else if (r === 1) await menuMsg(expandText("There's no MAIL here."));
+    else { MsgBox.close(); return; }
   }
 }
-async function playerPC() {
-  await say(`Accessed ${Game.player.name}'s PC.`);
+async function itemStorage() {
   while (true) {
-    const r = await ask('What would you like to do?', ['WITHDRAW ITEM', 'DEPOSIT ITEM', 'LOG OFF'], { menu: { x: 2, y: 2 } });
+    MsgBox.show(S('gText_WhatWouldYouLikeToDo', 'What would you like to do?'), { instant: true });
+    const r = await stdMenu([S('gText_WithdrawItem2', 'WITHDRAW ITEM'), S('gText_DepositItem2', 'DEPOSIT ITEM'), S('gFameCheckerText_Cancel', 'CANCEL')], { tx: 1, ty: 1, tw: 12, th: 6 });
     if (r === 0) {
       const ids = Object.keys(Game.pcItems).filter(k => Game.pcItems[k] > 0);
-      if (!ids.length) { await say('There are no items.'); continue; }
-      const i = await choose(ids.map(k => `${ITEMS[k].n} x${Game.pcItems[k]}`), { x: 60, y: 2 });
-      if (i < 0) continue;
-      const k = ids[i]; const n = await chooseQty(Game.pcItems[k], 0);
-      if (!n) continue;
-      Game.pcItems[k] -= n; if (!Game.pcItems[k]) delete Game.pcItems[k];
-      Bag.add(k, n); await say(`Withdrew ${n} ${ITEMS[k].n}.`);
+      if (!ids.length) { await menuMsg(expandText('There are no items.')); continue; }
+      const i = await stdMenu(ids.map(k => `${ITEMS[k].n} ×${Game.pcItems[k]}`).concat([S('gFameCheckerText_Cancel', 'CANCEL')]), { tx: 13, ty: 1, tw: 16, th: (ids.length + 1) * 2 });
+      if (i < 0 || i >= ids.length) continue;
+      const id = ids[i];
+      MsgBox.show(S('gText_WithdrawHowMany', 'Withdraw how many\n{STR_VAR_1}(s)?', { STR_VAR_1: ITEMS[id].n })); await MsgBox.waitPrinted();
+      const q = Game.pcItems[id] > 1 ? await chooseQty(Game.pcItems[id]) : 1;
+      if (!q) continue;
+      Game.pcItems[id] -= q; if (Game.pcItems[id] <= 0) delete Game.pcItems[id];
+      Bag.add(id, q);
+      await menuMsg(expandText(`Withdrew ${q}\n${ITEMS[id].n}(s).`));
     } else if (r === 1) {
-      const id = await openBag('sell');
-      if (!id) continue;
-      if (ITEMS[id].pocket === 'key') { await say("That can't be stored."); continue; }
-      const n = await chooseQty(Game.bag[id], 0);
-      if (!n) continue;
-      Bag.remove(id, n); Game.pcItems[id] = (Game.pcItems[id] || 0) + n;
-      await say(`${ITEMS[id].n} was stored via PC.`);
+      MsgBox.close();
+      const b = await openBag('sell');
+      if (!b) continue;
+      const it = ITEMS[b.item];
+      if (it.pocket === 'key_items') { await menuMsg(expandText("That can't be stored.")); continue; }
+      MsgBox.show(S('gText_DepositHowManyStrVars1', 'Deposit how many\n{STR_VAR_1}(s)?', { STR_VAR_1: it.n })); await MsgBox.waitPrinted();
+      const q = Bag.count(b.item) > 1 ? await chooseQty(Bag.count(b.item)) : 1;
+      if (!q) continue;
+      Bag.remove(b.item, q); Game.pcItems[b.item] = (Game.pcItems[b.item] || 0) + q;
+      await menuMsg(S('gText_DepositedStrVar2StrVar1s', 'Deposited {STR_VAR_2}\n{STR_VAR_1}(s).', { STR_VAR_1: it.n, STR_VAR_2: String(q) }));
     } else return;
   }
 }
 async function storagePC() {
-  await say("Accessed SOMEONE'S PC.\fPOKéMON Storage System opened.");
   while (true) {
-    const r = await ask('What would you like to do?', ['WITHDRAW POKéMON', 'DEPOSIT POKéMON', 'SEE YA!'], { menu: { x: 2, y: 2 } });
+    MsgBox.show(S('gText_WhatWouldYouLikeToDo', 'What would you like to do?'), { instant: true });
+    const r = await stdMenu([S('gText_WithdrawPokemon', 'WITHDRAW POKéMON'), S('gText_DepositPokemon', 'DEPOSIT POKéMON'), S('gText_SeeYa', 'SEE YA!')], { tx: 1, ty: 1, tw: 14, th: 6 });
     if (r === 0) {
-      if (!Game.box.length) { await say('There are no POKéMON here!'); continue; }
-      if (Game.party.length >= 6) { await say("You can't take any more POKéMON."); continue; }
-      const i = await choose(Game.box.map(m => `${m.name}  Lv${m.level}`), { x: 60, y: 2 });
-      if (i < 0) continue;
+      if (!Game.box.length) { await menuMsg(expandText('There are no POKéMON here.')); continue; }
+      if (Game.party.length >= 6) { await menuMsg(expandText("Your party is full!")); continue; }
+      const i = await stdMenu(Game.box.map(m => `${m.name} ${m.level}`).concat([S('gFameCheckerText_Cancel', 'CANCEL')]), { tx: 15, ty: 1, tw: 13, th: Math.min(18, (Game.box.length + 1) * 2) });
+      if (i < 0 || i >= Game.box.length) continue;
       const m = Game.box.splice(i, 1)[0]; Game.party.push(m);
-      await say(`${m.name} is taken out.\nGot ${m.name}.`);
+      await menuMsg(expandText(`${m.name} is taken out.\nGot ${m.name}.`));
     } else if (r === 1) {
-      if (Game.party.length <= 1) { await say("You can't deposit your last POKéMON!"); continue; }
-      const i = await openParty('select', { prompt: 'Deposit which POKéMON?' });
+      if (Game.party.length <= 1) { await menuMsg(expandText("That's your last POKéMON!")); continue; }
+      MsgBox.close();
+      const i = await openParty('select');
       if (i < 0) continue;
-      const others = Game.party.filter((m, j) => j !== i && !m.fainted);
-      if (!others.length) { await say("You can't deposit your last POKéMON!"); continue; }
-      const m = Game.party.splice(i, 1)[0]; Game.box.push(m);
-      await say(`${m.name} was stored in the BOX.`);
-    } else return;
+      const m = Game.party.splice(i, 1)[0]; m.heal(); Game.box.push(m);
+      await menuMsg(Sdyn('gText_PkmnWasDeposited', '{DYNAMIC 0x00} was deposited.', [m.name]));
+    } else { MsgBox.close(); return; }
   }
-}
-
-// ---------------- NURSE ----------------
-async function nurseScript() {
-  const tb = await say('Welcome to our POKéMON CENTER!\fWould you like me to heal your POKéMON back to perfect health?', { hold: true });
-  const r = await choose(['YES', 'NO'], { bottom: 112, x: W - 60 });
-  closeUI(tb);
-  if (r === 0) {
-    await say("Okay, I'll take your POKéMON for a few seconds.", { auto: 40 });
-    sfx('heal');
-    await wait(150);
-    healParty();
-    const m = World.map;
-    Game.lastHeal = { map: m.id, x: 6, y: 3, dir: 1 };
-    const out = m.warps[0];
-    Game.lastEscape = { map: out.to, x: out.tx, y: out.ty, dir: 0 };
-    await say("Thank you for waiting.\fWe've restored your POKéMON to full health.");
-  }
-  await say('We hope to see you again!');
 }
