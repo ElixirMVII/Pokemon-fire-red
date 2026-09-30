@@ -71,6 +71,7 @@ async function startWildBattle(mon, t) {
 }
 async function startTrainerBattle(tid, o = {}) {
   const tr = TRAINERS[tid];
+  if (!tr || !tr.party.length) { console.warn('trainer without party', tid); return 'win'; }
   const party = tr.party.map(pm => Pokemon.create(pm.species, pm.lvl, { moves: pm.moves, item: pm.item, fixedIV: Math.floor(pm.iv * 31 / 255), ot: tr.name, otId: 0 }));
   const isRival = tr.clsId === 'TRAINER_CLASS_RIVAL_EARLY' || tr.clsId === 'TRAINER_CLASS_RIVAL_LATE';
   const name = isRival ? Game.player.rival : tr.name;

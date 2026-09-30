@@ -97,7 +97,8 @@ for t, (item, move) in tm_items.items():
 cls_names = dict((m.group(1), cstr(m.group(2))) for m in re.finditer(r'\[(TRAINER_CLASS_\w+)\]\s*=\s*_\(("[^)]*")\)', R('src/data/text/trainer_class_names.h')))
 money = dict(re.findall(r'\{(TRAINER_CLASS_\w+),\s*(\d+)\}', R('src/battle_main.c')))
 parties = {}
-for m in re.finditer(r'static const struct (\w+) (\w+)\[\] = \{(.*?)\n\};', R('src/data/trainer_parties.h'), re.S):
+# one declaration per chunk (single-line dummy parties like `= {DUMMY_TRAINER_MON};` must not swallow the next party)
+for m in re.finditer(r'static const struct (\w+) (\w+)\[\] = \{((?:(?!static const struct).)*?)\};', R('src/data/trainer_parties.h'), re.S):
     mons = []
     for mm in re.finditer(r'\{(.*?)\n    \}', m.group(3), re.S):
         b = mm.group(1)
