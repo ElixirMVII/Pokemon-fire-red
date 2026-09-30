@@ -100,7 +100,7 @@ class Battle {
   async appear(b) { b.visible = true; b.clip = 0; sfx('ball'); Audio_.cry(b.mon.id); while (b.clip < 64) { b.clip = Math.min(64, b.clip + 4); await wait(1); } if (b.mon.shiny) { b.sparkle = 30; await wait(30); } }
   async disappear(b) { while (b.clip > 0) { b.clip -= 6; await wait(1); } b.visible = false; b.clip = 64; }
   async faintAnim(b) { Audio_.cry(b.mon.id, true); for (let i = 64; i >= 0; i -= 4) { b.clip = i; await wait(1); } b.visible = false; b.clip = 64; }
-  async statAnim(b, up) { sfx(up ? 'stat_up' : 'stat_down'); b.statFx = up ? 1 : -1; await wait(28); b.statFx = 0; }
+  async statAnim(b, up) { sfx(up ? 'stat_up' : 'stat_down'); if (this.aura && G.options.battleScene !== false) { await this.aura(b, up); return; } b.statFx = up ? 1 : -1; await wait(28); b.statFx = 0; }
 
   // ---------- flow ----------
   async run() {
@@ -324,6 +324,7 @@ class Battle {
   }
   async executeMove(u, t, mv, moveId) {
     const eff = mv.eff;
+    this.animated = false;
     u.v.rage = eff === 'RAGE';
     const selfTarget = mv.tgt === 'USER' || mv.tgt === 'OPPONENTS_FIELD' && false;
     // target semi-invulnerable
@@ -337,6 +338,7 @@ class Battle {
       u.v.lockedMove = null; u.v.rampage = 0;
       return;
     }
+    if (this.moveAnim) { await this.moveAnim(u, selfTarget ? u : t, mv, moveId); this.animated = true; }
     if (mv.p > 0 || ['LEVEL_DAMAGE', 'DRAGON_RAGE', 'SONICBOOM', 'SUPER_FANG', 'PSYWAVE', 'OHKO', 'LOW_KICK', 'MAGNITUDE', 'FLAIL', 'COUNTER', 'PRESENT', 'RETURN', 'FRUSTRATION', 'HIDDEN_POWER', 'ENDEAVOR'].includes(eff)) await this.damagingMove(u, t, mv, moveId);
     else await this.statusMove(u, t, mv, moveId);
   }
@@ -414,8 +416,10 @@ class Battle {
       return s;
     }
     if (t.v.endure && dmg >= t.mon.hp) dmg = t.mon.hp - 1;
-    await this.nudge(u);
+    if (!this.animated) await this.nudge(u);
     sfx(eff > 1 ? 'super' : eff < 1 ? 'weak' : 'hit');
+    if (this.fx && eff > 1) this.shakeScreen(3, 14);
+    if (this.fx && crit) { this.flashScreen('#fff', 6, 0.6); this.impact(t, 'normal', true); }
     await this.flashHit(t);
     t.mon.hp -= dmg; t.lastDamage = dmg; t.lastDamagePhys = true;
     await this.animHP(t);
@@ -675,6 +679,7 @@ class Battle {
     if (st === 'tox') b.v.toxic = 1;
     const def = { psn: 'sText_PkmnWasPoisoned', tox: 'sText_PkmnBadlyPoisoned', brn: 'sText_PkmnWasBurned', par: 'sText_PkmnWasParalyzed', slp: 'sText_PkmnFellAsleep', frz: 'sText_PkmnWasFrozen' }[st];
     sfx('stat_down');
+    if (this.statusAnim) await this.statusAnim(b, st);
     await this.msg(lbl || def, Object.assign(this.ab(source || b, b, b), source ? { B_SCR_ACTIVE_NAME_WITH_PREFIX: this.nm(source), B_SCR_ACTIVE_ABILITY: source.mon.ability } : {}));
     // Synchronize
     if (source === undefined && b.mon.ability === 'SYNCHRONIZE' && ['psn', 'brn', 'par'].includes(st)) { }
@@ -940,38 +945,81 @@ class Battle {
   }
 
   // ---------- rendering ----------
-  tick() { Game.playTime = (Game.playTime || 0) + 1; }
+  tick() { Game.playTime = (Game.playTime || 0) + 1; if (this.fxTick) this.fxTick(); }
   draw() {
+    const fx = this.fx || { shakeX: 0, shakeY: 0, dark: 0 };
+    ctx.save(); ctx.translate(fx.shakeX, fx.shakeY);
     const bg = loadImg(`assets/ui/bg_${this.terrain}.png`);
     if (bg.complete && bg.naturalWidth) ctx.drawImage(bg, 0, 0); else rect(0, 0, W, 112, '#f8f8f0');
+    if (fx.dark > 0) { ctx.globalAlpha = fx.dark; rect(0, 0, W, 112, '#100818'); ctx.globalAlpha = 1; }
     const E = this.E, P = this.P;
+    if (this.fx) this.fx.U.draw();
     // enemy
-    if (E.visible && !E.blink) {
-      const yo = (PICPOS.front[E.mon.id] || 0) - (PICPOS.elev[E.mon.id] || 0);
-      const x = 144 + E.offX, y = 8 + yo + E.offY;
-      drawMonSprite(E.mon.id, false, x, y, { clipH: E.clip, shiny: E.mon.shiny });
-      if (E.statFx) this.drawStatFx(x + 32, y + 36, E.statFx);
-    }
+    if (E.visible && !E.blink) this.drawBattler(E);
     if (this.eTrainer.show && this.trainer) {
       const im = loadImg(`assets/trainers/front/${this.trainer.pic}.png`);
       if (im.complete && im.naturalWidth) ctx.drawImage(im, Math.round(this.eTrainer.x), 8);
     }
     if (this.ball) { ctx.save(); ctx.translate(this.ball.x, this.ball.y); ctx.rotate(this.shake * 0.15); drawBallIcon(0, 0); ctx.restore(); }
     // player
-    if (P.visible && !P.blink && !P.hiddenFx) {
-      const x = 40 + P.offX, y = 48 + (PICPOS.back[P.mon.id] || 0) + P.offY;
-      drawMonSprite(P.mon.id, true, x, y, { clipH: P.clip, shiny: P.mon.shiny });
-      if (P.statFx) this.drawStatFx(x + 32, y + 40, P.statFx);
-    }
+    if (P.visible && !P.blink && !P.hiddenFx) this.drawBattler(P);
     if (this.pTrainer.show) {
       const im = loadImg(`assets/trainers/back/${this.oldMan ? 'old_man' : (Game.player.gender === 'F' ? 'leaf' : 'red')}.png`);
       if (im.complete && im.naturalWidth) ctx.drawImage(im, 0, this.pTrainer.frame * 64, 64, 64, Math.round(this.pTrainer.x), 48, 64, 64);
     }
+    if (this.fx) {
+      this.fx.P.draw();
+      for (const l of this.fx.lines) {
+        const k = l.grow ? Math.min(1, (l.t + 1) / 4) : 1;
+        ctx.globalAlpha = Math.min(1, 2 * (1 - l.t / l.life)); ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = l.color; ctx.lineWidth = l.w || 1; ctx.lineCap = 'round'; ctx.beginPath();
+        const pts = l.pts, n = l.grow ? Math.max(2, Math.ceil(pts.length * k)) : pts.length;
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        if (l.curve && pts.length === 3) ctx.quadraticCurveTo(pts[1][0], pts[1][1], pts[2][0], pts[2][1]);
+        else if (l.grow && pts.length === 2) ctx.lineTo(pts[0][0] + (pts[1][0] - pts[0][0]) * k, pts[0][1] + (pts[1][1] - pts[0][1]) * k);
+        else for (let i = 1; i < n; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        ctx.stroke(); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+      }
+    }
+    ctx.restore();
+    if (this.fx && this.fx.flash) { const f = this.fx.flash; ctx.globalAlpha = f.a * (1 - f.t / f.dur); rect(0, 0, W, 112, f.color); ctx.globalAlpha = 1; }
     if (E.visible && E.offX === 0) this.drawEnemyBox();
     if (P.visible) this.drawPlayerBox();
     // text box background
     const tb = loadImg('assets/ui/battle_msg.png');
     if (tb.complete) ctx.drawImage(tb, 0, 112);
+  }
+  // sprite of a battler with animation state (scale, tint, shine, mega form)
+  drawBattler(b) {
+    const back = b.side === 0, m = b.mon;
+    let src, x, y, w = 64, h = 64;
+    if (b.mega) {
+      const mg = MEGA[b.mega];
+      src = `assets/sprites/mega/${back ? (m.shiny ? 'shiny_back' : 'back') : (m.shiny ? 'shiny' : 'front')}_${mg.key}.png`;
+      w = h = 96;
+      if (back) { x = 72 - 48 + b.offX; y = 114 - (mg.bottom.back || 90) + b.offY; }
+      else { x = 176 - 48 + b.offX; y = 76 - (mg.bottom.front || 90) + b.offY; }
+    } else {
+      src = monSpriteSrc(m.id, back, m.shiny);
+      if (back) { x = 40 + b.offX; y = 48 + (PICPOS.back[m.id] || 0) + b.offY; }
+      else { const yo = (PICPOS.front[m.id] || 0) - (PICPOS.elev[m.id] || 0); x = 144 + b.offX; y = 8 + yo + b.offY; }
+    }
+    const im = loadImg(src);
+    if (!im.complete || !im.naturalWidth) return;
+    const sc = b.scale !== undefined ? b.scale : 1;
+    const clip = Math.max(0, Math.min(h, (b.clip !== undefined ? b.clip : 64) * h / 64));
+    ctx.save();
+    if (b.alpha !== undefined) ctx.globalAlpha = b.alpha;
+    const cx = x + w / 2, by = y + h;
+    ctx.translate(cx, by); ctx.scale(sc, sc); ctx.translate(-cx, -by);
+    ctx.drawImage(im, 0, 0, w, clip, x, y + (h - clip), w, clip);
+    if (b.tint && b.tint.a > 0) { const s = silhouette(src, b.tint.color); if (s) { ctx.globalAlpha = b.tint.a; ctx.drawImage(s, 0, 0, w, clip, x, y + (h - clip), w, clip); } }
+    if (b.shine !== null && b.shine !== undefined) {
+      const s = silhouette(src, '#ffffff');
+      if (s) { ctx.globalAlpha = 0.8; const bx = x - 20 + b.shine * (w + 40); ctx.beginPath(); ctx.rect(bx, y, 10, h); ctx.clip(); ctx.drawImage(s, x, y); }
+    }
+    ctx.restore();
+    if (b.statFx) this.drawStatFx(x + w / 2, y + h / 2 + 4, b.statFx);
   }
   drawStatFx(cx, cy, dir) {
     const t = G.frame % 16;

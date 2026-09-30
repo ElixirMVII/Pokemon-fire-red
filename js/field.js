@@ -13,7 +13,7 @@ const MB = {
   TALL_GRASS: 0x02, COUNTER: 0x80, PC: 0x83, SIGNPOST: 0x84, REGION_MAP: 0x85, TELEVISION: 0x86, POKEMON_CENTER_SIGN: 0x87, POKEMART_SIGN: 0x88,
   JUMP_EAST: 0x38, JUMP_WEST: 0x39, JUMP_NORTH: 0x3A, JUMP_SOUTH: 0x3B,
   IMPASSABLE_EAST: 0x30, IMPASSABLE_WEST: 0x31, IMPASSABLE_NORTH: 0x32, IMPASSABLE_SOUTH: 0x33,
-  CAVE_DOOR: 0x60, EAST_ARROW_WARP: 0x62, WEST_ARROW_WARP: 0x63, NORTH_ARROW_WARP: 0x64, SOUTH_ARROW_WARP: 0x65,
+  CAVE_DOOR: 0x60, LADDER: 0x61, EAST_ARROW_WARP: 0x62, WEST_ARROW_WARP: 0x63, NORTH_ARROW_WARP: 0x64, SOUTH_ARROW_WARP: 0x65,
   REGULAR_WARP: 0x67, WARP_DOOR: 0x69, UP_ESCALATOR: 0x6A, DOWN_ESCALATOR: 0x6B,
   UP_RIGHT_STAIR: 0x6C, UP_LEFT_STAIR: 0x6D, DOWN_RIGHT_STAIR: 0x6E, DOWN_LEFT_STAIR: 0x6F,
 };
@@ -105,9 +105,10 @@ const Field = {
     if (!r) return { coll: 1, elev: 0, beh: 0, enc: 0, border: true };
     const i = r.y * r.m.w + r.x;
     const o = this.overrides[r.name + ',' + r.x + ',' + r.y];
-    return { coll: o !== undefined ? o : +r.m.coll[i], elev: parseInt(r.m.elev[i], 16), beh: r.m.beh[i], enc: +r.m.enc[i] };
+    const mo = this.mtOverrides[r.name + ',' + r.x + ',' + r.y], me = mo !== undefined && r.m.mts ? r.m.mts[mo] : null;
+    return { coll: o !== undefined ? o : +r.m.coll[i], elev: parseInt(r.m.elev[i], 16), beh: me ? me[1] : r.m.beh[i], enc: +r.m.enc[i] };
   },
-  overrides: {},
+  overrides: {}, mtOverrides: {},
   updateElevation(o) {
     const t = this.tile(o.x, o.y);
     if (t.elev === 15) return;
@@ -119,7 +120,7 @@ const Field = {
     const e = this.tile(x, y).elev;
     return !(e === 0 || e === 15 || e === z);
   },
-  objAt(x, y, except) { return this.objects.find(o => o !== except && !o.hidden && o.occupies(x, y)); },
+  objAt(x, y, except) { return this.objects.find(o => o !== except && !o.hidden && !o.noCollide && o.occupies(x, y)); },
   // pret-like collision check for obj stepping from its position in dir d
   collision(o, d) {
     const [dx, dy] = DVEC[d];
@@ -157,7 +158,7 @@ const Field = {
     p.gfx = Game.player.gender === 'F' ? 'GREEN_NORMAL' : 'RED_NORMAL';
     p.x = p.prevX = x; p.y = p.prevY = y; if (dir) p.dir = dir; p.moving = null; p.offX = p.offY = 0; p.hidden = false; p.invisible = false;
     const t = this.tile(x, y); if (t.elev !== 0 && t.elev !== 15) { p.elev = p.prevElev = t.elev; } else if (warped) { p.elev = 3; }
-    this.overrides = {};
+    this.overrides = {}; this.mtOverrides = {};
     this.spawnObjects();
     this.fx = []; this.doorAnims = [];
     this.stepsSinceEnc = 0;
@@ -173,6 +174,7 @@ const Field = {
     const l = [b + '.png', b + '_border.png'];
     if (m.top) l.push(b + '_top.png');
     if (m.borderTop) l.push(b + '_border_top.png');
+    if (m.mts && Object.keys(m.mts).length) l.push(b + '_mt.png');
     for (const o of m.objects) l.push('assets/ow/' + o.graphics_id.replace('OBJ_EVENT_GFX_', '') + '.png');
     return l;
   },
@@ -205,11 +207,20 @@ const Field = {
   obj(localId) {
     if (localId === 'LOCALID_PLAYER' || localId === '255' || localId === 255 || localId === 'OBJ_EVENT_ID_PLAYER') return this.player;
     if (localId === 'VAR_LAST_TALKED') return this.obj(VM.svar('VAR_LAST_TALKED'));
+    if (localId === 'LOCALID_CAMERA' || localId === '127' || localId === 127) return this.camObj;
     if (typeof localId === 'string' && localId.startsWith('VAR_')) localId = VM.val(localId);
     return this.objects.find(o => o.localId === localId || String(this.map.objects.indexOf(o.template) + 1) === String(localId));
   },
-  centerCamera() {
+  // SpawnCameraObject: an invisible object the camera follows (Bill's teleporter pan)
+  spawnCamera() {
     const p = this.player;
+    this.camObj = new FObj({ localId: '127', gfx: 'RED_NORMAL', x: p.x, y: p.y, elev: p.elev, prevElev: p.elev, script: null, template: {} });
+    this.camObj.invisible = true; this.camObj.noCollide = true;
+    this.objects.push(this.camObj);
+  },
+  removeCamera() { if (this.camObj) { this.objects = this.objects.filter(o => o !== this.camObj); this.camObj = null; } },
+  centerCamera() {
+    const p = this.camObj || this.player;
     this.camX = p.x * 16 + p.offX - 112;
     this.camY = p.y * 16 + p.offY - 64;
   },
@@ -332,7 +343,7 @@ const Field = {
     // step-on warps
     const here = this.tile(p.x, p.y);
     const wi = this.map.warps.findIndex(w => w.x === p.x && w.y === p.y);
-    if (wi >= 0 && [MB.CAVE_DOOR, MB.REGULAR_WARP, MB.WARP_DOOR, MB.UP_ESCALATOR, MB.DOWN_ESCALATOR].includes(here.beh)) {
+    if (wi >= 0 && [MB.CAVE_DOOR, MB.LADDER, MB.REGULAR_WARP, MB.WARP_DOOR, MB.UP_ESCALATOR, MB.DOWN_ESCALATOR].includes(here.beh)) {
       const w = this.map.warps[wi];
       VM.start(async () => { sfx(here.beh === MB.WARP_DOOR ? 'door' : 'exit'); await this.warp(this.map.warpsTo[wi], +w.dest_warp_id); });
       return true;
@@ -543,6 +554,7 @@ const Field = {
       const im = IMG['assets/maps/' + name + '.png'];
       if (im && im.complete) ctx.drawImage(im, ox * 16 - cx, oy * 16 - cy);
     }
+    this.drawMtOverrides(0, cx, cy);
     // door animations
     for (const d of this.doorAnims) {
       const door = m.doors && m.doors[d.x + ',' + d.y]; if (!door) continue;
@@ -561,6 +573,7 @@ const Field = {
       if (g) this.drawFx(g, cx, cy);
     }
     // top layers
+    this.drawMtOverrides(16, cx, cy);
     for (const [name, ox, oy] of layers) {
       const md = MAPDATA[name];
       if (!md.top) continue;
@@ -580,6 +593,18 @@ const Field = {
       drawStdFrame(1, 2, 14, 2);
       drawGameText(this.popup.text, 8 + Math.floor((112 - textWidth(this.popup.text)) / 2), 18, TC.DARK_GRAY);
       ctx.restore();
+    }
+  },
+  // setmetatile replacements (row 0 below sprites, row 1 above)
+  drawMtOverrides(row, cx, cy) {
+    const mts = this.map.mts; if (!mts) return;
+    const im = loadImg('assets/maps/' + this.mapName + '_mt.png');
+    if (!im.complete || !im.naturalWidth) return;
+    for (const key in this.mtOverrides) {
+      const [mn, x, y] = key.split(','); if (mn !== this.mapName) continue;
+      const e = mts[this.mtOverrides[key]]; if (!e) continue;
+      if (row === 0) rect(x * 16 - cx, y * 16 - cy, 16, 16, '#000');
+      ctx.drawImage(im, e[0] * 16, row, 16, 16, x * 16 - cx, y * 16 - cy, 16, 16);
     }
   },
   drawObj(o, cx, cy) {

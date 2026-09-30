@@ -90,7 +90,11 @@ async function openStartMenu() {
     switch (choice) {
       case 'EXIT': return;
       case 'POKEDEX': await openDex(); break;
-      case 'POKEMON': { const r = await openParty('field'); if (r === 'close') return; break; }
+      case 'POKEMON': {
+        const r = await openParty('field');
+        if (r && r.fieldMove) { await useFieldMove(r); return; }
+        break;
+      }
       case 'BAG': { const r = await openBag('field'); if (r === 'close') return; break; }
       case 'PLAYER': await trainerCard(); break;
       case 'SAVE': if (await saveMenu()) return; break;
@@ -203,12 +207,26 @@ async function openParty(mode, opts = {}) {
       // action menu
       const acts = [];
       if (mode === 'battle' || mode === 'forced') acts.push(['SHIFT', S('gText_Shift', 'SHIFT')], ['SUMMARY', S('gText_Summary5', 'SUMMARY')], ['CANCEL', S('gFameCheckerText_Cancel', 'CANCEL')]);
-      else acts.push(['SUMMARY', S('gText_Summary5', 'SUMMARY')], ['SWITCH', S('gText_Switch2', 'SWITCH')], ['ITEM', S('gText_Item', 'ITEM')], ['CANCEL', S('gFameCheckerText_Cancel', 'CANCEL')]);
+      else {
+        for (const fm of FIELD_MOVES) if (m.hasMove(fm)) acts.push(['FM:' + fm, MOVES[fm].n]);
+        acts.push(['SUMMARY', S('gText_Summary5', 'SUMMARY')], ['SWITCH', S('gText_Switch2', 'SWITCH')], ['ITEM', S('gText_Item', 'ITEM')], ['CANCEL', S('gFameCheckerText_Cancel', 'CANCEL')]);
+      }
       st.msg = S('gText_DoWhatWithPokemon', 'Do what with this {PKMN}?'); st.msgW = 16;
       const na = acts.length;
       const r = await stdMenu(acts.map(a => a[1]), { tx: 19, ty: 19 - na * 2, tw: 10, th: na * 2 });
       const act = r < 0 ? 'CANCEL' : acts[r][0];
       st.msg = baseMsg(); st.msgW = 16;
+      if (act.startsWith('FM:')) {
+        const fm = act.slice(3);
+        if (fm === 'CUT') {
+          if (!VM.flag('FLAG_BADGE02_GET')) { await menuMsg(S('gText_CantUseUntilNewBadge', "This can't be used until a new\nBADGE is obtained.")); continue; }
+          const [fx, fy] = Field.front(), tree = Field.objects.find(o => !o.hidden && o.gfx === 'CUT_TREE' && o.x === fx && o.y === fy);
+          if (!tree) { await menuMsg(S('gText_NothingToCut', "There's nothing to CUT.")); continue; }
+          await leaveFull(scr);
+          return { fieldMove: 'CUT', idx: c, target: tree };
+        }
+        continue;
+      }
       if (act === 'SUMMARY') { scr.close(); await openSummary(Game.party, c, {}).then(i => { st.cursor = i; }); scr.open(); }
       else if (act === 'SWITCH') { if (n > 1) { st.swapFrom = c; st.msg = S('gText_MoveToWhere', 'Move to where?'); } }
       else if (act === 'ITEM') {
@@ -231,6 +249,19 @@ async function openParty(mode, opts = {}) {
         return done(c);
       }
     }
+  }
+}
+
+// field moves usable from the party menu (FRLG lists them above SUMMARY)
+const FIELD_MOVES = ['CUT', 'FLASH', 'STRENGTH', 'SURF', 'ROCK_SMASH', 'WATERFALL', 'FLY', 'DIG', 'TELEPORT', 'SOFTBOILED', 'MILK_DRINK', 'SWEET_SCENT'];
+async function useFieldMove(r) {
+  const mon = Game.party[r.idx];
+  if (r.fieldMove === 'CUT') {
+    STR_VARS[0] = mon.name; STR_VARS[1] = MOVES.CUT.n;
+    await msg(T('Text_MonUsedMove') || expandText(mon.name + ' used CUT!'), { close: true });
+    await fieldMoveShowMon(mon);
+    await runMovement(r.target, ['cut_tree']);
+    r.target.hidden = true; if (r.target.flag && r.target.flag !== '0') VM.setFlag(r.target.flag);
   }
 }
 

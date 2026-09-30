@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
 """Render FireRed maps from a pret/pokefirered checkout into image layers + JSON.
 usage: build_maps.py <pokefirered dir> <out dir>"""
-import json, os, re, struct, sys
+import re, json, os, re, struct, sys
 from PIL import Image
 
 PFR, OUT = sys.argv[1], sys.argv[2]
-MAPS = ['PalletTown', 'PalletTown_PlayersHouse_1F', 'PalletTown_PlayersHouse_2F', 'PalletTown_RivalsHouse', 'PalletTown_ProfessorOaksLab',
-        'Route1', 'ViridianCity', 'ViridianCity_PokemonCenter_1F', 'ViridianCity_Mart', 'ViridianCity_School', 'ViridianCity_House', 'ViridianCity_Gym',
-        'Route22', 'Route2', 'Route2_ViridianForest_SouthEntrance', 'Route2_ViridianForest_NorthEntrance', 'Route2_House', 'Route2_EastBuilding',
-        'ViridianForest', 'PewterCity', 'PewterCity_Gym', 'PewterCity_Mart', 'PewterCity_PokemonCenter_1F', 'PewterCity_House1', 'PewterCity_House2',
-        'PewterCity_Museum_1F', 'Route21_North', 'Route3', 'Route23', 'Route22_NorthEntrance',
-        'ViridianCity_PokemonCenter_2F', 'PewterCity_PokemonCenter_2F', 'PewterCity_Museum_2F']
+MAPS = ['PalletTown', 'PalletTown_PlayersHouse_1F', 'PalletTown_PlayersHouse_2F', 'PalletTown_RivalsHouse', 'PalletTown_ProfessorOaksLab', 'Route1', 'ViridianCity', 'ViridianCity_PokemonCenter_1F', 'ViridianCity_Mart', 'ViridianCity_School', 'ViridianCity_House', 'ViridianCity_Gym', 'Route22', 'Route2', 'Route2_ViridianForest_SouthEntrance', 'Route2_ViridianForest_NorthEntrance', 'Route2_House', 'Route2_EastBuilding', 'ViridianForest', 'PewterCity', 'PewterCity_Gym', 'PewterCity_Mart', 'PewterCity_PokemonCenter_1F', 'PewterCity_House1', 'PewterCity_House2', 'PewterCity_Museum_1F', 'Route21_North', 'Route3', 'Route23', 'Route22_NorthEntrance', 'ViridianCity_PokemonCenter_2F', 'PewterCity_PokemonCenter_2F', 'PewterCity_Museum_2F', 'Route4', 'Route4_PokemonCenter_1F', 'Route4_PokemonCenter_2F', 'MtMoon_1F', 'MtMoon_B1F', 'MtMoon_B2F', 'CeruleanCity', 'CeruleanCity_BikeShop', 'CeruleanCity_Gym', 'CeruleanCity_House1', 'CeruleanCity_House2', 'CeruleanCity_House3', 'CeruleanCity_House4', 'CeruleanCity_House5', 'CeruleanCity_Mart', 'CeruleanCity_PokemonCenter_1F', 'CeruleanCity_PokemonCenter_2F', 'Route24', 'Route25', 'Route25_SeaCottage', 'Route9', 'Route5', 'Route5_PokemonDayCare', 'Route5_SouthEntrance', 'UndergroundPath_NorthEntrance', 'UndergroundPath_NorthSouthTunnel', 'UndergroundPath_SouthEntrance', 'Route6', 'Route6_NorthEntrance', 'VermilionCity', 'VermilionCity_Gym', 'VermilionCity_House1', 'VermilionCity_House2', 'VermilionCity_House3', 'VermilionCity_Mart', 'VermilionCity_PokemonCenter_1F', 'VermilionCity_PokemonCenter_2F', 'VermilionCity_PokemonFanClub', 'Route11', 'Route11_EastEntrance_1F', 'Route11_EastEntrance_2F', 'DiglettsCave_NorthEntrance', 'DiglettsCave_SouthEntrance', 'DiglettsCave_B1F', 'SSAnne_Exterior', 'SSAnne_1F_Corridor', 'SSAnne_1F_Room1', 'SSAnne_1F_Room2', 'SSAnne_1F_Room3', 'SSAnne_1F_Room4', 'SSAnne_1F_Room5', 'SSAnne_1F_Room6', 'SSAnne_1F_Room7', 'SSAnne_2F_Corridor', 'SSAnne_2F_Room1', 'SSAnne_2F_Room2', 'SSAnne_2F_Room3', 'SSAnne_2F_Room4', 'SSAnne_2F_Room5', 'SSAnne_2F_Room6', 'SSAnne_3F_Corridor', 'SSAnne_B1F_Corridor', 'SSAnne_B1F_Room1', 'SSAnne_B1F_Room2', 'SSAnne_B1F_Room3', 'SSAnne_B1F_Room4', 'SSAnne_B1F_Room5', 'SSAnne_CaptainsOffice', 'SSAnne_Deck', 'SSAnne_Kitchen']
 os.makedirs(OUT, exist_ok=True)
 
 layouts = {l['id']: l for l in json.load(open(f'{PFR}/data/layouts/layouts.json'))['layouts'] if 'id' in l}
@@ -31,9 +26,14 @@ def read_pal(path):
 tcache = {}
 def load_tileset(name):
     if name in tcache: return tcache[name]
-    sn = snake(name)
-    kind = 'primary' if os.path.isdir(f'{PFR}/data/tilesets/primary/{sn}') else 'secondary'
-    d = f'{PFR}/data/tilesets/{kind}/{sn}'
+    # resolve the folder from graphics.h (names like SSAnne -> ss_anne don't snake-case cleanly)
+    gh = open(f'{PFR}/src/data/tilesets/graphics.h').read()
+    m = re.search(r'gTilesetTiles_' + re.escape(name.replace('gTileset_', '')) + r'\[\] = INCBIN_U32\("(data/tilesets/\w+/\w+)/', gh)
+    if m: d = f'{PFR}/{m.group(1)}'
+    else:
+        sn = snake(name)
+        kind = 'primary' if os.path.isdir(f'{PFR}/data/tilesets/primary/{sn}') else 'secondary'
+        d = f'{PFR}/data/tilesets/{kind}/{sn}'
     im = Image.open(f'{d}/tiles.png')
     idx = list(im.convert('P').getdata()) if im.mode == 'P' else None
     w, h = im.size
@@ -140,7 +140,19 @@ for name in MAPS:
             render_door(png, pn, prim, sec).save(f'{OUT}/../doors/{fname}')
             doors[f"{w['x']},{w['y']}"] = {'img': 'assets/doors/' + fname, 'sliding': snd == 'DOOR_SOUND_SLIDING'}
     conns = [{'dir': c['direction'], 'map': id2dir.get(c['map']), 'offset': c['offset']} for c in (mj.get('connections') or [])]
+    # metatiles that this map's scripts can place with setmetatile -> sheet (row 0 below, row 1 above)
+    mts = {}
+    sp = f'{PFR}/data/maps/{name}/scripts.inc'
+    if os.path.exists(sp):
+        ids = sorted({mt_defs[n] for n in re.findall(r'setmetatile\s+\d+,\s*\d+,\s*(METATILE_\w+)', open(sp).read()) if n in mt_defs})
+        if ids:
+            sheet = Image.new('RGBA', (16 * len(ids), 32), (0, 0, 0, 0))
+            for k, mid in enumerate(ids):
+                r = mt(mid)
+                if r: sheet.paste(r[0], (k * 16, 0)); sheet.paste(r[1], (k * 16, 16)); mts[mid] = [k, r[2] & 0x1FF]
+            sheet.save(f'{OUT}/{name}_mt.png')
     index[name] = {
+        'mts': mts,
         'id': mj['id'], 'name': name, 'w': W, 'h': H, 'music': mj.get('music'), 'type': mj.get('map_type'), 'mapsec': mj.get('region_map_section'),
         'showName': mj.get('show_map_name'), 'battleScene': mj.get('battle_scene'), 'weather': mj.get('weather'), 'running': mj.get('allow_running'),
         'top': has_top, 'borderTop': has_btop, 'bw': bw, 'bh': bh,

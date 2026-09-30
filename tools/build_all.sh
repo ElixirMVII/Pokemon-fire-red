@@ -13,6 +13,7 @@ python3 tools/build_extra.py "$PFR" assets
 python3 tools/build_mons.py "$PFR" assets/sprites
 python3 tools/build_font.py "$PFR" assets/font js/gen/font.js
 python3 tools/build_data.py "$PFR" js/gen/data.js
+python3 tools/build_mega.py assets js/gen/mega.js
 python3 tools/build_strings.py "$PFR" js/gen/strings.js
 python3 tools/build_scripts.py "$PFR" assets/maps/maps.json js/gen/scripts.js
 # embed map + sprite metadata as JS so the game also runs from file://

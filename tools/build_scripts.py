@@ -128,7 +128,7 @@ def ev(name, depth=0):
 used = set()
 for b in out.values():
     for st in b:
-        for a in st[1:]: used |= set(re.findall(r'\b[A-Z][A-Z0-9_]+\b', a))
+        for a in st[1:]: used |= set(re.findall(r'\b[A-Z][A-Za-z0-9_]+\b', a))
 for o in [x for m in maps.values() for x in m['objects']]:
     used |= {o.get('movement_type', ''), o.get('trainer_type', '')}
 consts = {}

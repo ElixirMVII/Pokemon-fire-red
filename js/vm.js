@@ -232,7 +232,7 @@ const VM = {
       case 'opendoor': await Field.animDoor(v(a[0]), v(a[1]), true); return;
       case 'closedoor': await Field.animDoor(v(a[0]), v(a[1]), false); return;
       case 'waitdooranim': return;
-      case 'setmetatile': Field.overrides[Field.mapName + ',' + v(a[0]) + ',' + v(a[1])] = v(a[3]) ? 1 : 0; return;
+      case 'setmetatile': { const key = Field.mapName + ',' + v(a[0]) + ',' + v(a[1]); Field.overrides[key] = v(a[3]) ? 1 : 0; Field.mtOverrides[key] = v(a[2]); return; }
       case 'fadescreen': case 'fadescreenspeed': { const t = a[0]; if (/TO_BLACK|TO_WHITE/.test(t)) await fadeOut(0.08, t.includes('WHITE') ? '#fff' : '#000'); else await fadeIn(0.08); return; }
       case 'playse': sfx(typeof SONGS !== 'undefined' && SONGS[a[0]] ? a[0] : this.seName(a[0])); return;
       case 'waitse': await wait(10); return;
@@ -243,14 +243,21 @@ const VM = {
       case 'waitfanfare': await Audio_.waitFanfare(); return;
       case 'playmoncry': Audio_.cry(v(a[0])); return;
       case 'waitmoncry': await wait(40); return;
-      case 'setworldmapflag': case 'famechecker': case 'incrementgamestat': case 'trywondercardscript': case 'setfieldeffectargument': case 'nop': return;
-      case 'dofieldeffect': if (/POKECENTER_HEAL/.test(a[0])) this.pendingFx = pokecenterHealFx(); return;
+      case 'setworldmapflag': case 'famechecker': case 'incrementgamestat': case 'trywondercardscript': case 'nop': return;
+      case 'dofieldeffect':
+        if (/POKECENTER_HEAL/.test(a[0])) this.pendingFx = pokecenterHealFx();
+        else if (/USE_CUT_ON_TREE|FIELD_MOVE_SHOW_MON/.test(a[0])) { const mon = Game.party[(this.fieldArgs || [])[0] || 0]; this.pendingState = fieldMoveShowMon(mon); }
+        return;
       case 'waitfieldeffect': if (this.pendingFx) { await this.pendingFx; this.pendingFx = null; } return;
       case 'showmonpic': MonPic.show(v(a[0]), v(a[1]), v(a[2])); return;
       case 'hidemonpic': MonPic.hide(); return;
       case 'set_gym_trainers': return;
       case 'getpartysize': this.svars.VAR_RESULT = Game.party.length; return;
-      case 'checkpartymove': this.svars.VAR_RESULT = 6; return;
+      case 'checkpartymove': { const mv = String(v(a[0])).replace('MOVE_', ''); const i = Game.party.findIndex(m => m.hasMove(mv)); this.svars.VAR_RESULT = i < 0 ? 6 : i; return; }
+      case 'getplayerxy': this.setVarK(a[0], Field.player.x); this.setVarK(a[1], Field.player.y); return;
+      case 'fadenewbgm': Audio_.playSong(a[0]); return;
+      case 'bufferboxname': STR_VARS[this.strIdx(a[0])] = 'BOX 1'; return;
+      case 'setfieldeffectargument': this.fieldArgs = this.fieldArgs || []; this.fieldArgs[v(a[0])] = v(a[1]); return;
       // ----- items / money / mons -----
       case 'additem': { const id = v(a[0]), n = v(a[1] || 1); this.svars.VAR_RESULT = Bag.add(id, n) ? 1 : 0; return; }
       case 'removeitem': Bag.remove(v(a[0]), v(a[1] || 1)); return;
@@ -358,6 +365,8 @@ const VM = {
     return e ? e[2] : null;
   },
   async runMapScripts(kind) {
+    if (kind === 'onTransition') { await this.runMapScripts('onTransitionOnly'); await this.runMapScripts('onLoad'); return; }
+    if (kind === 'onTransitionOnly') kind = 'onTransition';
     const l = this.mapScriptLabel(kind);
     if (!l) return;
     if (kind === 'onWarpInto' || kind === 'onFrame') {
@@ -421,6 +430,40 @@ const VM = {
         return 0;
       case 'BedroomPC': case 'PlayerPC': await playerPC(); return 0;
       case 'ShowPokemonStorageSystemPC': await storagePC(); return 0;
+      case 'SetVermilionTrashCans': {
+        const a4 = rand(15) + 1; let a5 = a4;
+        const pickOf = arr => arr[rand(arr.length)];
+        const opts = { 1: [1, 5], 2: [1, 5, -1], 3: [1, 5, -1], 4: [1, 5, -1], 5: [5, -1], 6: [-5, 1, 5], 7: [-5, 1, 5, -1], 8: [-5, 1, 5, -1], 9: [-5, 1, 5, -1],
+          10: [-5, 5, -1], 11: [-5, 1], 12: [-5, 1, -1], 13: [-5, 1, -1], 14: [-5, 1, -1], 15: [-5, -1] };
+        a5 += pickOf(opts[a4]);
+        if (a5 > 15) a5 = a4 % 5 === 0 ? a4 - 1 : a4 + 1;
+        this.svars.VAR_0x8004 = a4; this.svars.VAR_0x8005 = a5; return 0;
+      }
+      case 'GetInGameTradeSpeciesInfo': { const t = TRADES[this.svar('VAR_0x8004')]; STR_VARS[0] = SPECIES[t.req].name; STR_VARS[1] = SPECIES[t.species].name; return t.req; }
+      case 'GetTradeSpecies': { const m = Game.party[this.svar('VAR_0x8005')]; STR_VARS[0] = m ? m.name : ''; return m ? m.id : 0; }
+      case 'CreateInGameTradePokemon': {
+        const t = TRADES[this.svar('VAR_0x8004')], slot = this.svar('VAR_0x8005');
+        const m = Pokemon.create(t.species, Game.party[slot].level, { ot: t.ot, otId: t.otId, item: t.item });
+        m.pid = t.pid >>> 0; m.nature = m.pid % 25; STAT_KEYS.forEach((k, i) => m.ivs[k] = t.ivs[i]); m.nick = t.nick; m.otGender = t.otGender === 'FEMALE' ? 'F' : 'M';
+        m.gender = SPECIES[t.species].g === 255 ? null : SPECIES[t.species].g === 254 ? 'F' : SPECIES[t.species].g === 0 ? 'M' : (SPECIES[t.species].g > (m.pid & 0xff) ? 'F' : 'M');
+        m.metLoc = 'MAPSEC_IN_GAME_TRADE'; m.calcStats(); m.hp = m.stats.hp;
+        this.tradeFrom = Game.party[slot]; this.tradeTo = m; Game.party[slot] = m; registerCaught(t.species); return 0;
+      }
+      case 'DoInGameTradeScene': this.pendingState = tradeScene(this.tradeFrom, this.tradeTo); return 0;
+      case 'SetSeenMon': registerSeen(this.svar('VAR_0x8004') || 0); return 0;
+      case 'SpawnCameraObject': Field.spawnCamera(); return 0;
+      case 'RemoveCameraObject': Field.removeCamera(); return 0;
+      case 'AnimateTeleporterHousing': case 'AnimateTeleporterCable': this.pendingState = teleporterFx(name); return 0;
+      case 'DoSSAnneDepartureCutscene': this.pendingState = ssAnneDeparture(); return 0;
+      case 'IsPlayerLeftOfVermilionSailor': { const o = Field.objects.find(o => /SAILOR/.test(o.gfx) && o.y === Field.player.y); return o && Field.player.x < o.x ? 1 : 0; }
+      case 'ShowTownMap': this.pendingState = townMap(); return 0;
+      case 'BufferTMHMMoveName': { const it = ITEMS[this.svar('VAR_0x8004')] || {}; STR_VARS[0] = it.tm ? (MOVES[it.tm] || {}).n || '' : ''; return 0; }
+      case 'GetPCBoxToSendMon': return 0;
+      case 'ShouldShowBoxWasFullMessage': return 0;
+      case 'OpenMuseumFossilPic': MonPic.show(this.svar('VAR_0x8004') === 1 ? 142 : 141, 10, 3); return 0;
+      case 'CloseMuseumFossilPic': MonPic.hide(); return 0;
+      case 'IsThereMonInRoute5Daycare': return Game.daycare ? 1 : 0;
+      case 'ForcePlayerOntoBike': return 0;
       case 'CreatePCMenu': {
         const opts = [[0, this.flag('FLAG_SYS_NOT_SOMEONES_PC') ? S('gText_BillsPc', "BILL's PC") : S('gText_SomeonesPc', "SOMEONE's PC")], [1, S('gText_PlayersPc', "{PLAYER}'s PC")]];
         if (this.flag('FLAG_SYS_POKEDEX_GET')) opts.push([2, S('gText_ProfOakSPc', "PROF. OAK's PC")]);
@@ -486,6 +529,7 @@ function doMoveAct(o, act) {
   if (act === 'unlock_facing_direction') { o.lockFacing = false; return wait(1); }
   if (act === 'nurse_joy_bow') { o.fixedFrame = Math.min(o.meta.n - 1, 9); return wait(32).then(() => { o.fixedFrame = null; }); }
   if (act === 'reveal_trainer') return wait(1);
+  if (act === 'cut_tree') return (async () => { sfx('SE_M_CUT'); for (let f = 1; f < (o.meta.n || 4); f++) { o.fixedFrame = f; await wait(6); } })();
   return wait(1);
 }
 
