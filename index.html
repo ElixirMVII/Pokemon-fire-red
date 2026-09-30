@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Pokémon FireRed Remake</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="wrap">
+  <canvas id="screen"></canvas>
+  <div id="pad">
+    <div id="dpad">
+      <button data-btn="up" class="d up">▲</button>
+      <button data-btn="left" class="d left">◀</button>
+      <button data-btn="right" class="d right">▶</button>
+      <button data-btn="down" class="d down">▼</button>
+    </div>
+    <div id="mid">
+      <button data-btn="select" class="s">SELECT</button>
+      <button data-btn="start" class="s">START</button>
+    </div>
+    <div id="ab">
+      <button data-btn="b" class="r b">B</button>
+      <button data-btn="a" class="r a">A</button>
+    </div>
+  </div>
+  <div id="help">Arrows: move · Z/Space: A · X/Esc: B (hold to run) · Enter: START · Shift: SELECT</div>
+</div>
+<script src="js/core.js"></script>
+<script src="js/gfx.js"></script>
+<script src="js/data.js"></script>
+<script src="js/pokemon.js"></script>
+<script src="js/battle.js"></script>
+<script src="js/maps.js"></script>
+<script src="js/world.js"></script>
+<script src="js/menus.js"></script>
+<script src="js/scripts.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
