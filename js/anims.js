@@ -527,3 +527,18 @@ Object.assign(MOVE_ANIMS, {
   async INGRAIN(u) { const c = this.ctr(u), f = this.fxLayer(); for (let k = 0; k < 4; k++) f.lines.push({ pts: [[c.x - 12 + k * 8, c.y + 20], [c.x - 14 + k * 8 + rand(6), c.y + 30]], t: 0, life: 24, color: '#80d060', w: 1.5, grow: true }); await this.heal(u, 20); },
   async METRONOME(u) { await this.frames(24, i => { u.offX = Math.sin(i / 3) * 4; }); u.offX = 0; },
 });
+
+// level up: golden rings rise around the pokemon with sparkles, the healthbox glows
+Object.assign(Battle.prototype, {
+  async levelUpAnim(b) {
+    if (G.options.battleScene === false) return;
+    const c = this.ctr(b), P = this.fxLayer().P;
+    b.tint = { color: '#fff0a0', a: 0 };
+    await this.frames(40, i => {
+      b.tint.a = 0.5 * Math.sin(i / 40 * Math.PI);
+      if (i % 8 === 0) P.add({ x: c.x, y: c.y + 24, vy: -1.4, shape: 'ring', size: 20, grow: -0.25, life: 28, color: '#ffe060', lw: 2, glow: true });
+      if (i % 2 === 0) P.add({ x: c.x - 24 + rand(48), y: c.y + 20, vy: -1 - Math.random() * 1.5, life: 26, shape: 'star', size: 2.5, color: i % 4 ? '#fff4b0' : '#ffd040', spin: 0.2, glow: true, shrink: true });
+    });
+    b.tint = null;
+  },
+});

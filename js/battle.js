@@ -1277,6 +1277,7 @@ async function levelUp(mon, msgFn, battler) {
   mon.friendship = Math.min(255, mon.friendship + (mon.friendship < 100 ? 5 : mon.friendship < 200 ? 3 : 2));
   if (battler) battler.dispHP = mon.hp;
   Audio_.fanfare('MUS_LEVEL_UP');
+  if (battler && G.scene && G.scene.levelUpAnim && battler.visible) G.scene.levelUpAnim(battler);
   await msgFn('sText_PkmnGrewToLv', { B_BUFF1: mon.name, B_BUFF2: String(mon.level) });
   // level up stat window (gains, then totals)
   const labels = ['MAX. HP', 'ATTACK', 'DEFENSE', 'SP. ATK', 'SP. DEF', 'SPEED'];
