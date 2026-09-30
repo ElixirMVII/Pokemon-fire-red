@@ -63,11 +63,14 @@ class Pokemon {
     return p;
   }
   static from(o) { const p = Object.assign(new Pokemon(), JSON.parse(JSON.stringify(o))); p.calcStats(); return p; }
-  toJSON() { const o = Object.assign({}, this); delete o.stats; return o; }
+  toJSON() { const o = Object.assign({}, this); delete o.stats; delete o.mega; delete o.tracedAbility; return o; }
   get sp() { return SPECIES[this.id]; }
   get name() { return this.nick || this.sp.name; }
-  get types() { const t = this.sp.types; return t[0] === t[1] ? [t[0]] : t; }
-  get ability() { return this.sp.ab[this.abilityIdx] || this.sp.ab[0]; }
+  get types() { const t = this.mega ? MEGA[this.mega].types : this.sp.types; return t[0] === t[1] ? [t[0]] : t; }
+  get ability() { return this.tracedAbility || (this.mega ? MEGA[this.mega].ab : (this.sp.ab[this.abilityIdx] || this.sp.ab[0])); }
+  // mega stone this pokemon can use (held item matches its species)
+  get megaStone() { const m = this.item && typeof MEGA !== 'undefined' && MEGA[this.item]; return m && m.base === this.id ? this.item : null; }
+  setMega(stone) { this.mega = stone || null; if (!this.mega) delete this.mega; this.calcStats(); this.hp = Math.min(this.hp, this.stats.hp); }
   get natureName() { return NATURE_NAMES[this.nature]; }
   get fainted() { return this.hp <= 0; }
   defaultMoves() {
@@ -85,7 +88,7 @@ class Pokemon {
     const sp = this.sp, mods = NATURE_MODS[this.nature];
     const s = {};
     STAT_KEYS.forEach((k, i) => {
-      const base = sp.b[i], iv = this.ivs[k], ev = Math.floor(this.evs[k] / 4);
+      const base = (this.mega ? MEGA[this.mega].b : sp.b)[i], iv = this.ivs[k], ev = Math.floor(this.evs[k] / 4);
       if (k === 'hp') s.hp = this.id === 292 ? 1 : Math.floor((2 * base + iv + ev) * this.level / 100) + this.level + 10;
       else {
         let v = Math.floor((2 * base + iv + ev) * this.level / 100) + 5;

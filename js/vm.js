@@ -450,6 +450,7 @@ const VM = {
         this.tradeFrom = Game.party[slot]; this.tradeTo = m; Game.party[slot] = m; registerCaught(t.species); return 0;
       }
       case 'DoInGameTradeScene': this.pendingState = tradeScene(this.tradeFrom, this.tradeTo); return 0;
+      case 'CustomStarterMegaStone': return customStarterMegaStone();
       case 'SetSeenMon': registerSeen(this.svar('VAR_0x8004') || 0); return 0;
       case 'SpawnCameraObject': Field.spawnCamera(); return 0;
       case 'RemoveCameraObject': Field.removeCamera(); return 0;

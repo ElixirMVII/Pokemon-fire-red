@@ -26,6 +26,7 @@ Object.assign(Battle.prototype, {
   },
   // centre of a battler's sprite on screen
   ctr(b) {
+    if (b.mon.mega) { const mg = MEGA[b.mon.mega]; return b.side === 1 ? { x: 176 + b.offX, y: 76 - (mg.bottom.front || 90) * 0.42 + b.offY } : { x: 72 + b.offX, y: 114 - (mg.bottom.back || 90) * 0.4 + b.offY }; }
     if (b.side === 1) { const yo = (PICPOS.front[b.mon.id] || 0) - (PICPOS.elev[b.mon.id] || 0); return { x: 176 + b.offX, y: 8 + yo + 36 + b.offY }; }
     return { x: 72 + b.offX, y: 48 + (PICPOS.back[b.mon.id] || 0) + 38 + b.offY };
   },
@@ -85,7 +86,7 @@ Object.assign(Battle.prototype, {
       while (y < c.y) { pts.push([x, y]); y += 6 + rand(8); x += rand(14) - 7; }
       pts.push([c.x, c.y]);
       f.lines.push({ pts, t: 0, life: 7, color: '#ffffa0', w: o.big ? 3 : 2 });
-      this.flashScreen('#ffff80', 5, 0.35); sfx('SE_M_THUNDERBOLT');
+      this.flashScreen('#ffff80', 5, 0.35); this.mse('SE_M_THUNDERBOLT');
       this.impact(t, 'electric', o.big);
       await wait(7);
     }
@@ -118,6 +119,15 @@ Object.assign(Battle.prototype, {
     if (G.options.battleScene === false) return;
     this.fxLayer();
     const type = mv.t, contact = (mv.f || []).includes('MAKES_CONTACT');
+    // the move's original sound effects, on the original timeline
+    const se = typeof MOVE_SE !== 'undefined' && MOVE_SE[id];
+    this.seTimeline = !!se;
+    if (se) for (const [f, name] of se) (async () => { if (f) await wait(f); if (name === 'CRY') Audio_.cry(u.mon.id); else sfx(name); })();
+    try { await this.moveAnimBody(u, t, mv, id, type, contact); } finally { this.seTimeline = false; }
+  },
+  // sound from an effect helper, skipped when the move plays its original timeline
+  mse(name) { if (!this.seTimeline) sfx(name); },
+  async moveAnimBody(u, t, mv, id, type, contact) {
     const fn = MOVE_ANIMS[id];
     if (fn) { await fn.call(this, u, t, type, mv); return; }
     // generic by kind
@@ -174,7 +184,7 @@ const MOVE_ANIMS = {
   async TAKE_DOWN(u, t) { await this.lunge(u, 28, 12); this.impact(t, 'normal', true); await this.recoil(t, 8); },
   async DOUBLE_EDGE(u, t) { await this.lunge(u, 30, 12); this.impact(t, 'normal', true); this.flashScreen('#fff', 6, 0.5); await this.recoil(t, 8); },
   async HEADBUTT(u, t) { await this.lunge(u, 24, 10); this.impact(t, 'normal', true); await this.recoil(t, 6); },
-  async SCRATCH(u, t) { await this.lunge(u, 10, 8); claw.call(this, t, '#ffffff', 3); sfx('SE_M_SCRATCH'); this.impact(t, 'normal'); await wait(12); },
+  async SCRATCH(u, t) { await this.lunge(u, 10, 8); claw.call(this, t, '#ffffff', 3); this.mse('SE_M_SCRATCH'); this.impact(t, 'normal'); await wait(12); },
   async FURY_SWIPES(u, t) { claw.call(this, t, '#ffffff', 3); this.impact(t, 'normal'); await wait(12); },
   async SLASH(u, t) { await this.lunge(u, 12, 8); const c = this.ctr(t); this.fxLayer().lines.push({ pts: [[c.x - 22, c.y - 20], [c.x + 22, c.y + 18]], t: 0, life: 12, color: '#ffffff', w: 3, grow: true }); this.impact(t, 'normal', true); await wait(14); },
   async METAL_CLAW(u, t) { await this.lunge(u, 12, 8); claw.call(this, t, '#e0e0ff', 3); this.impact(t, 'steel', true); this.flashScreen('#d0d0ff', 5, 0.4); await wait(12); },
@@ -189,7 +199,7 @@ const MOVE_ANIMS = {
     await this.frames(10, i => { const o = 16 - i * 1.4; f.lines.push({ pts: [[c.x - 14, c.y - o], [c.x, c.y - o - 4], [c.x + 14, c.y - o]], t: 0, life: 2, color: '#fff', w: 2 }, { pts: [[c.x - 14, c.y + o], [c.x, c.y + o + 4], [c.x + 14, c.y + o]], t: 0, life: 2, color: '#fff', w: 2 }); });
     this.impact(t, 'dark', true); await this.recoil(t, 5);
   },
-  async EMBER(u, t) { await this.projectile(u, t, { type: 'fire', count: 3, frames: 16, arc: 10, size: 3, gap: 4, sparks: true }); sfx('SE_M_FLAME_WHEEL'); this.impact(t, 'fire'); await this.frames(16, i => { if (i % 2 === 0) this.impactSmall(t, 'fire'); }); },
+  async EMBER(u, t) { await this.projectile(u, t, { type: 'fire', count: 3, frames: 16, arc: 10, size: 3, gap: 4, sparks: true }); this.mse('SE_M_FLAME_WHEEL'); this.impact(t, 'fire'); await this.frames(16, i => { if (i % 2 === 0) this.impactSmall(t, 'fire'); }); },
   async FLAMETHROWER(u, t) { await this.stream(u, t, 'fire', 34, { density: 4, size: 3.5 }); this.impact(t, 'fire', true); await this.tintPulse(t, '#ff4010', 12, 0.5); },
   async FIRE_SPIN(u, t) { const c = this.ctr(t), P = this.fxLayer().P; await this.frames(40, i => { const a = i / 4; P.add({ x: c.x + Math.cos(a) * 20, y: c.y + Math.sin(a) * 8 + 10 - i * 0.4, life: 14, size: 3, color: i % 2 ? '#ff8030' : '#ffe060', glow: true, shrink: true }); }); },
   async FIRE_BLAST(u, t) { await this.projectile(u, t, { type: 'fire', size: 6, frames: 18, sparks: true }); const c = this.ctr(t), P = this.fxLayer().P; for (let a = 0; a < 5; a++) for (let r = 0; r < 20; r += 3) P.add({ x: c.x + Math.cos(a * 1.2566 - 1.57) * r, y: c.y + Math.sin(a * 1.2566 - 1.57) * r, life: 24, size: 4, color: '#ff8030', glow: true, shrink: true }); this.impact(t, 'fire', true); this.flashScreen('#ff8040', 8, 0.4); await wait(20); },
@@ -339,3 +349,99 @@ Object.assign(Battle.prototype, {
     b.visible = false; b.clip = 64; b.offY = 0;
   },
 });
+
+// ---------- mega evolution / field effects ----------
+const hsl = (h, l = 62) => `hsl(${Math.round(h) % 360},95%,${l}%)`;
+Object.assign(Battle.prototype, {
+  // swap() is called at the moment of the flash, when the sprite changes form
+  async megaAnim(b, swap) {
+    const f = this.fxLayer(), P = f.P, U = f.U;
+    if (G.options.battleScene === false) { swap(); return; }
+    let c = this.ctr(b);
+    // 1. key stone lights up near the trainer's side, stone glows on the pokemon
+    const ks = b.side === 0 ? { x: 20, y: 104 } : { x: 236, y: 12 };
+    await this.darken(0.6, 12);
+    sfx('SE_M_DETECT');
+    await this.frames(26, i => {
+      const h = i * 14;
+      P.add({ x: ks.x, y: ks.y, size: 5 + Math.sin(i / 3) * 1.5, life: 3, color: hsl(h), glow: true });
+      P.add({ x: c.x, y: c.y + 8, size: 4 + Math.sin(i / 3), life: 3, color: hsl(h + 180), glow: true });
+      if (i % 2 === 0) P.add({ x: ks.x, y: ks.y, shape: 'star', size: 3, vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2, life: 14, color: '#fff', glow: true, spin: 0.2, shrink: true });
+    });
+    // 2. rainbow beams link the key stone and the mega stone
+    for (let k = 0; k < 3; k++) f.lines.push({ pts: [[ks.x, ks.y], [(ks.x + c.x) / 2 + (k - 1) * 14, (ks.y + c.y) / 2 - 30 + k * 6], [c.x, c.y]], curve: true, grow: true, t: 0, life: 40, color: hsl(k * 120), w: 2 });
+    sfx('SE_M_REFLECT');
+    await this.frames(20, i => {
+      const p = i / 20;
+      for (let k = 0; k < 3; k++) {
+        const q = (p + k / 3) % 1, mx = (ks.x + c.x) / 2 + (k - 1) * 14, my = (ks.y + c.y) / 2 - 30 + k * 6;
+        const x = (1 - q) * (1 - q) * ks.x + 2 * (1 - q) * q * mx + q * q * c.x, y = (1 - q) * (1 - q) * ks.y + 2 * (1 - q) * q * my + q * q * c.y;
+        P.add({ x, y, size: 2.5, life: 10, color: hsl(i * 18 + k * 120), glow: true, shrink: true });
+      }
+    });
+    // 3. energy spirals in and wraps the pokemon in light
+    b.tint = { color: '#ffffff', a: 0 };
+    sfx('SE_M_MEGA_KICK');
+    await this.frames(44, i => {
+      b.tint.a = Math.min(1, i / 36);
+      for (let k = 0; k < 3; k++) {
+        const a = i * 0.35 + k * 2.094, r = 44 - i * 0.8;
+        P.add({ x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r * 0.6, vx: -Math.cos(a) * 0.8, vy: -Math.sin(a) * 0.5, size: 2.2, life: 12, color: hsl(i * 10 + k * 120), glow: true, shrink: true });
+      }
+      if (i % 8 === 0) U.add({ x: c.x, y: c.y, shape: 'ring', size: 40 - i * 0.6, grow: -1.2, life: 20, color: hsl(i * 9), lw: 1.5 });
+      if (i > 20) P.add({ x: c.x, y: c.y, size: (i - 20) * 1.1, life: 2, color: '#fff8e0', alpha: 0.35, glow: true });
+      f.shakeA = i / 44 * 1.5; f.shakeT = 2;
+    });
+    // 4. the shell of light bursts: new form
+    this.flashScreen('#ffffff', 22, 1);
+    swap(); c = this.ctr(b);
+    this.shakeScreen(4, 18);
+    sfx('SE_M_EXPLOSION');
+    P.burst(28, i => { const a = i / 28 * 6.283, s = 2 + Math.random() * 2.5; return { x: c.x, y: c.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, drag: 0.9, life: 34, shape: i % 3 ? 'star' : undefined, size: 3 + Math.random() * 2, color: hsl(i * 13), glow: true, spin: 0.25, shrink: true }; });
+    for (let k = 0; k < 3; k++) U.add({ x: c.x, y: c.y, shape: 'ring', size: 6 + k * 6, grow: 2.4 - k * 0.4, life: 22, color: k ? hsl(k * 120) : '#fff', lw: 2.5 - k * 0.5 });
+    b.scale = 1.12;
+    await this.frames(24, i => { b.tint.a = 1 - i / 24; b.scale = 1 + 0.12 * (1 - easeOut(i / 24)); });
+    b.tint = null; b.scale = 1;
+    // 5. mega symbol flares over the pokemon
+    U.add({ x: c.x, y: c.y - 4, shape: 'mega', size: 18, life: 36, color: '#fff' });
+    await wait(16);
+    await this.darken(0, 12);
+  },
+  async weatherAnim(kind) {
+    if (G.options.battleScene === false) return;
+    const f = this.fxLayer(), U = f.U;
+    if (kind === 'sun') {
+      await this.frames(40, i => {
+        f.dark = -0.18 * Math.sin(i / 40 * Math.PI);
+        if (i % 3 === 0) U.add({ x: 30 + rand(60), y: -4, vx: 1.6, vy: 2.4, shape: 'line', len: 6, lw: 2, life: 40, color: '#fff0a0', alpha: 0.7, glow: true });
+        if (i % 5 === 0) U.add({ x: 20, y: 6, shape: 'ring', size: 4, grow: 2, life: 24, color: '#ffe080', lw: 2, glow: true });
+      });
+      f.dark = 0;
+    } else if (kind === 'electric') {
+      await this.frames(40, i => {
+        if (i % 2 === 0) U.add({ x: rand(240), y: 60 + rand(50), vx: (Math.random() - 0.5) * 3, shape: 'line', len: 3, lw: 1.5, life: 10, color: '#ffe040', glow: true });
+        if (i % 10 === 0) { this.flashScreen('#ffff60', 4, 0.2); }
+      });
+    }
+  },
+});
+// sun wash: negative dark values brighten the scene with a warm tint
+(function () {
+  const draw0 = Particles.prototype.draw;
+  Particles.prototype.draw = function (g = ctx) {
+    const rest = [];
+    for (const p of this.list) {
+      if (p.shape !== 'mega') { rest.push(p); continue; }
+      const k = p.t / p.life, a = k < 0.2 ? k / 0.2 : 1 - (k - 0.2) / 0.8, r = p.size * (0.8 + 0.4 * easeOut(Math.min(1, k * 3)));
+      g.save(); g.globalAlpha = a; g.globalCompositeOperation = 'lighter'; g.translate(p.x, p.y);
+      const gr = g.createRadialGradient(0, 0, 0, 0, 0, r * 1.4); gr.addColorStop(0, 'rgba(255,255,255,0.8)'); gr.addColorStop(0.5, hsl(p.t * 12, 60)); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(0, 0, r * 1.4, 0, 6.283); g.fill();
+      // mega symbol: ring with a double helix through it
+      g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.arc(0, 0, r * 0.8, 0, 6.283); g.stroke();
+      g.lineWidth = 1.5;
+      for (const ph of [0, Math.PI]) { g.beginPath(); for (let y = -r * 0.7; y <= r * 0.7; y += 1) g.lineTo(Math.sin(y / r * 4.5 + ph) * r * 0.32, y); g.stroke(); }
+      g.restore();
+    }
+    const all = this.list; this.list = rest; draw0.call(this, g); this.list = all;
+  };
+})();

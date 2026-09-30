@@ -43,7 +43,7 @@ class Battle {
     this.eParty = o.party; this.canLose = !!o.canLose; this.terrain = o.terrain || 'grass';
     this.result = null; this.runs = 0; this.levelled = new Set(); this.participants = new Set();
     this.fieldFx = { mudSport: false, reflect: [0, 0], lightScreen: [0, 0], mist: [0, 0] };
-    this.payDay = 0;
+    this.payDay = 0; this.weather = null; this.eTerrain = null; this.megaUsed = [false, false]; this.megaNext = false;
     const pi = this.oldMan ? 0 : Game.party.findIndex(m => !m.fainted);
     this.P = this.mkBattler(this.oldMan ? Pokemon.create(13, 5) : Game.party[pi], 0); this.P.idx = pi;
     this.E = this.mkBattler(this.eParty[0], 1); this.E.idx = 0;
@@ -102,6 +102,47 @@ class Battle {
   async faintAnim(b) { Audio_.cry(b.mon.id, true); for (let i = 64; i >= 0; i -= 4) { b.clip = i; await wait(1); } b.visible = false; b.clip = 64; }
   async statAnim(b, up) { sfx(up ? 'stat_up' : 'stat_down'); if (this.aura && G.options.battleScene !== false) { await this.aura(b, up); return; } b.statFx = up ? 1 : -1; await wait(28); b.statFx = 0; }
 
+  // ---------- mega evolution ----------
+  canMega(b) {
+    if (this.megaUsed[b.side] || b.mon.mega || !b.mon.megaStone) return false;
+    return b.side === 0 ? Bag.count('MEGA_BRACELET') > 0 : !this.wild;
+  }
+  revertForms() {
+    for (const m of [...Game.party, ...this.eParty]) { if (m.tracedAbility) delete m.tracedAbility; if (m.mega) m.setMega(null); }
+  }
+  async megaEvolve(b) {
+    const m = b.mon, mg = MEGA[m.megaStone];
+    this.megaUsed[b.side] = true;
+    const owner = b.side === 0 ? Game.player.name : (this.trainer ? this.trainer.cls + ' ' + this.trainer.name : 'The foe');
+    await this.msg(`${this.nm(b)}'s ${ITEMS[m.megaStone].n}\\nis reacting to ${owner}'s\\l${b.side === 0 ? 'MEGA BRACELET' : 'KEY STONE'}!`);
+    if (this.megaAnim) await this.megaAnim(b, () => m.setMega(m.megaStone));
+    else m.setMega(m.megaStone);
+    Audio_.cry(m.id);
+    await this.msg(`${this.nm(b)} has MEGA EVOLVED into\n${mg.name}!`, {}, { wait: true });
+    await this.switchInAbility(b);
+  }
+  // abilities that announce themselves when the pokemon enters (or mega evolves)
+  async switchInAbility(b) {
+    const o = this.other(b), a = b.mon.ability;
+    if (a === 'DROUGHT' && !(this.weather && this.weather.type === 'sun')) {
+      this.weather = { type: 'sun', turns: 5 };
+      if (this.weatherAnim) await this.weatherAnim('sun');
+      await this.msg('sText_PkmnsXIntensifiedSun', { B_SCR_ACTIVE_NAME_WITH_PREFIX: this.nm(b), B_SCR_ACTIVE_ABILITY: a });
+    } else if (a === 'ELECTRIC SURGE') {
+      this.eTerrain = { type: 'electric', turns: 5 };
+      if (this.weatherAnim) await this.weatherAnim('electric');
+      await this.msg('An electric current ran\nacross the battlefield!');
+    } else if (a === 'MOLD BREAKER') {
+      await this.msg(`${this.nm(b)} breaks the mold!`);
+    } else if (a === 'TRACE' && !o.mon.fainted && !['TRACE', 'WONDER GUARD'].includes(o.mon.ability)) {
+      const got = o.mon.ability; b.mon.tracedAbility = got;
+      await this.msg('sText_PkmnTraced', { B_SCR_ACTIVE_NAME_WITH_PREFIX: this.nm(b), B_BUFF1: this.nm(o), B_BUFF2: got });
+    } else if (a === 'INTIMIDATE' && !o.mon.fainted) {
+      await this.changeStat(o, 'atk', -1, true);
+    }
+  }
+  defAb(mon) { return this.moldBreaker ? '' : mon.ability; }
+
   // ---------- flow ----------
   async run() {
     G.scene = this;
@@ -112,6 +153,7 @@ class Battle {
       await this.doTurn(act);
     }
     MsgBox.close();
+    this.revertForms();
     return this.result;
   }
   async intro() {
@@ -167,6 +209,7 @@ class Battle {
         if (P.v.lockedMove) return { type: 'move', move: P.v.lockedMove };
         const mi = await pushUI(new FightMenu(this));
         if (mi < 0) continue;
+        this.megaNext = !!FightMenu.mega && this.canMega(P); FightMenu.mega = false;
         const slot = P.mon.moves[mi];
         if (slot.pp <= 0) { await this.msg('sText_NoPPLeft', {}, { wait: true }); continue; }
         if (P.v.disabled && P.v.disabled.move === slot.id) { await this.msg('sText_PkmnMoveIsDisabled', { B_ACTIVE_NAME_WITH_PREFIX: P.mon.name, B_CURRENT_MOVE: MOVES[slot.id].n }, { wait: true }); continue; }
@@ -199,6 +242,13 @@ class Battle {
     else if (act.type === 'item') { await this.useItem(act.item, act.target); if (this.result) return; }
     else if (act.type === 'switch') { await this.switchPlayer(act.idx, true); }
     if (eAct.type === 'item') { await this.trainerUseItem(eAct); }
+    // mega evolution happens before any move (faster side first)
+    const megas = [];
+    if (act.type === 'move' && this.megaNext) megas.push(P);
+    if (eAct.type === 'move' && this.canMega(E)) megas.push(E);
+    this.megaNext = false;
+    megas.sort((x, y) => this.effSpeed(y) - this.effSpeed(x));
+    for (const b of megas) await this.megaEvolve(b);
     const actors = [];
     if (eAct.type === 'move') actors.push({ b: E, move: eAct.move });
     if (act.type === 'move') actors.push({ b: P, move: act.move });
@@ -211,6 +261,7 @@ class Battle {
       if (a.b.mon.fainted) continue;
       a.b.movedThisTurn = true;
       await this.useMove(a.b, this.other(a.b), a.move);
+      this.moldBreaker = false;
       if (this.result) return;
       await this.faintCheck();
       if (this.result) return;
@@ -273,7 +324,7 @@ class Battle {
       if (rand(5) !== 0 && mv.eff !== 'THAW_HIT') { await this.msg('sText_PkmnIsFrozen', this.ab(u)); return; }
       mon.status = null; await this.msg('sText_PkmnWasDefrosted', this.ab(u));
     }
-    if (v.flinch) { await this.msg('sText_PkmnFlinched', this.ab(u)); v.lockedMove = null; return; }
+    if (v.flinch) { await this.msg('sText_PkmnFlinched', this.ab(u)); v.lockedMove = null; if (mon.ability === 'STEADFAST') await this.changeStat(u, 'spe', 1, false); return; }
     if (v.disabled && v.disabled.move === moveId && !v.lockedMove) { await this.msg('sText_PkmnMoveIsDisabled', Object.assign(this.ab(u), { B_CURRENT_MOVE: mv.n })); return; }
     if (v.confused) {
       v.confused--;
@@ -323,12 +374,15 @@ class Battle {
     if (slot && slot.pp > 0) slot.pp -= (this.other(u).mon.ability === 'PRESSURE' ? Math.min(2, slot.pp) : 1);
   }
   async executeMove(u, t, mv, moveId) {
+    if (u.mon.ability === 'AERILATE' && mv.t === 'normal' && mv.p > 0) mv = Object.assign({}, mv, { t: 'flying', aerilate: true });
+    this.moldBreaker = u.mon.ability === 'MOLD BREAKER';
     const eff = mv.eff;
     this.animated = false;
     u.v.rage = eff === 'RAGE';
     const selfTarget = mv.tgt === 'USER' || mv.tgt === 'OPPONENTS_FIELD' && false;
     // target semi-invulnerable
-    if (!selfTarget && t.v.semi && !(t.v.semi === 'FLY' && ['GUST', 'TWISTER', 'THUNDER', 'SKY_UPPERCUT'].includes(moveId)) && !(t.v.semi === 'DIG' && ['EARTHQUAKE', 'MAGNITUDE'].includes(moveId))) {
+    const noGuard = u.mon.ability === 'NO GUARD' || t.mon.ability === 'NO GUARD';
+    if (!selfTarget && !noGuard && t.v.semi && !(t.v.semi === 'FLY' && ['GUST', 'TWISTER', 'THUNDER', 'SKY_UPPERCUT'].includes(moveId)) && !(t.v.semi === 'DIG' && ['EARTHQUAKE', 'MAGNITUDE'].includes(moveId))) {
       await this.msg('sText_AttackMissed', this.ab(u, t)); return;
     }
     if (!selfTarget && mv.tgt !== 'OPPONENTS_FIELD' && !this.accCheck(u, t, mv)) {
@@ -343,6 +397,7 @@ class Battle {
     else await this.statusMove(u, t, mv, moveId);
   }
   accCheck(u, t, mv) {
+    if (u.mon.ability === 'NO GUARD' || t.mon.ability === 'NO GUARD') return true;
     if (mv.a === 0 || mv.eff === 'ALWAYS_HIT' || mv.eff === 'VITAL_THROW') return true;
     if (u.v.lockOn) { u.v.lockOn = 0; return true; }
     if (mv.eff === 'OHKO') { if (u.mon.level < t.mon.level) return false; return rand(100) < (u.mon.level - t.mon.level + 30); }
@@ -354,10 +409,11 @@ class Battle {
   }
   effectiveness(mv, mon) {
     if (mv.t === 'mystery' || mv.eff === 'STRUGGLE') return 1;
-    if (mon.ability === 'LEVITATE' && mv.t === 'ground') return 0;
+    if (this.defAb(mon) === 'LEVITATE' && mv.t === 'ground') return 0;
     return mon.types.reduce((e, ty) => e * typeEff(mv.t, ty), 1);
   }
-  critCheck(u, mv) {
+  critCheck(u, mv, t) {
+    if (t && ['SHELL ARMOR', 'BATTLE ARMOR'].includes(this.defAb(t.mon))) return false;
     let stage = (u.v.focus ? 2 : 0) + (['HIGH_CRITICAL', 'SKY_ATTACK', 'BLAZE_KICK', 'POISON_TAIL'].includes(mv.eff) || mv.eff === 'RAZOR_WIND' ? 1 : 0);
     if (u.mon.item === 'SCOPE_LENS') stage++;
     stage = Math.min(4, stage);
@@ -370,6 +426,10 @@ class Battle {
     const pinch = { OVERGROW: 'grass', BLAZE: 'fire', TORRENT: 'water', SWARM: 'bug' }[a.ability];
     if (pinch === type && a.hp <= Math.floor(a.stats.hp / 3)) power = Math.floor(power * 150 / 100);
     if (this.fieldFx.mudSport && type === 'electric') power = Math.floor(power / 2);
+    if (a.ability === 'TOUGH CLAWS' && mv.f && mv.f.includes('MAKES_CONTACT')) power = Math.floor(power * 130 / 100);
+    if (a.ability === 'MEGA LAUNCHER' && ['WATER_PULSE', 'DARK_PULSE', 'DRAGON_PULSE', 'AURA_SPHERE', 'ORIGIN_PULSE'].includes(mv.id || Object.keys(MOVES).find(k => MOVES[k] === mv))) power = Math.floor(power * 150 / 100);
+    if (mv.aerilate) power = Math.floor(power * 120 / 100);
+    if (this.eTerrain && this.eTerrain.type === 'electric' && type === 'electric' && !a.types.includes('flying') && a.ability !== 'LEVITATE') power = Math.floor(power * 150 / 100);
     let A = physical ? a.stats.atk : a.stats.spa, D = physical ? d.stats.def : d.stats.spd;
     // Gen III stat badge boosts (player side only)
     if (u.side === 0) {
@@ -383,8 +443,8 @@ class Battle {
     if (a.ability === 'HUGE POWER' || a.ability === 'PURE POWER') { if (physical) A *= 2; }
     if (a.ability === 'HUSTLE' && physical) A = Math.floor(A * 150 / 100);
     if (a.ability === 'GUTS' && a.status && physical) A = Math.floor(A * 150 / 100);
-    if (d.ability === 'MARVEL SCALE' && d.status && physical) D = Math.floor(D * 150 / 100);
-    if (d.ability === 'THICK FAT' && (type === 'fire' || type === 'ice')) A = Math.floor(A / 2);
+    if (this.defAb(d) === 'MARVEL SCALE' && d.status && physical) D = Math.floor(D * 150 / 100);
+    if (this.defAb(d) === 'THICK FAT' && (type === 'fire' || type === 'ice')) A = Math.floor(A / 2);
     if (mv.eff === 'EXPLOSION') D = Math.max(1, Math.floor(D / 2));
     const as = physical ? u.st.atk : u.st.spa, ds = physical ? t.st.def : t.st.spd;
     A = crit ? (as > 0 ? applyStage(A, as) : A) : applyStage(A, as);
@@ -398,9 +458,11 @@ class Battle {
     dmg += 2;
     if (crit) dmg *= 2;
     if (u.v.charged && type === 'electric') dmg *= 2;
-    if (a.types.includes(type)) dmg = Math.floor(dmg * 15 / 10);
+    if (this.weather && this.weather.type === 'sun') { if (type === 'fire') dmg = Math.floor(dmg * 15 / 10); else if (type === 'water') dmg = Math.floor(dmg / 2); }
+    if (a.types.includes(type)) dmg = a.ability === 'ADAPTABILITY' ? dmg * 2 : Math.floor(dmg * 15 / 10);
     for (const ty of d.types) dmg = Math.floor(dmg * typeEff(type, ty));
     if (dmg > 0) dmg = Math.max(1, Math.floor(dmg * (100 - rand(16)) / 100));
+    if (this.defAb(d) === 'MULTISCALE' && d.hp === d.stats.hp) dmg = Math.max(1, Math.floor(dmg / 2));
     return dmg;
   }
   hiddenPowerType(m) {
@@ -421,8 +483,13 @@ class Battle {
     if (this.fx && eff > 1) this.shakeScreen(3, 14);
     if (this.fx && crit) { this.flashScreen('#fff', 6, 0.6); this.impact(t, 'normal', true); }
     await this.flashHit(t);
+    const hpBefore = t.mon.hp;
     t.mon.hp -= dmg; t.lastDamage = dmg; t.lastDamagePhys = true;
     await this.animHP(t);
+    if (t.mon.hp <= 0 && t.mon.ability === 'INNARDS OUT' && !u.mon.fainted) {
+      u.mon.hp = Math.max(0, u.mon.hp - hpBefore); await this.flashHit(u); await this.animHP(u);
+      await this.msg(`${this.nm(u)} is hurt by\n${this.nm(t)}'s INNARDS OUT!`);
+    }
     if (crit) await this.msg('sText_CriticalHit');
     return dmg;
   }
@@ -432,7 +499,7 @@ class Battle {
     if (typeEffv === 0 && !['LEVEL_DAMAGE', 'DRAGON_RAGE', 'SONICBOOM', 'SUPER_FANG', 'PSYWAVE', 'ENDEAVOR'].includes(eff) || (typeEffv === 0 && mv.t !== 'mystery')) {
       await this.msg('sText_ItDoesntAffect', this.ab(u, t)); u.v.lockedMove = null; return;
     }
-    if (t.mon.ability === 'WONDER GUARD' && typeEffv <= 1 && mv.p > 0) { await this.msg('sText_PkmnsXMadeItIneffective', this.ab(t, u)); return; }
+    if (this.defAb(t.mon) === 'WONDER GUARD' && typeEffv <= 1 && mv.p > 0) { await this.msg('sText_PkmnsXMadeItIneffective', this.ab(t, u)); return; }
     let power = mv.p;
     if (eff === 'LOW_KICK') { const w = t.mon.sp.wt; power = w < 10 ? 20 : w < 25 ? 40 : w < 50 ? 60 : w < 100 ? 80 : w < 200 ? 100 : 120; }
     if (eff === 'MAGNITUDE') { const r = rand(100); const tbl = [[5, 4, 10], [15, 5, 30], [35, 6, 50], [65, 7, 70], [85, 8, 90], [95, 9, 110], [100, 10, 150]]; const e = tbl.find(x => r < x[0]); power = e[2]; await this.msg('sText_MagnitudeStrength', { B_BUFF1: String(e[1]) }); }
@@ -456,7 +523,7 @@ class Battle {
     if (eff === 'ENDEAVOR') { if (t.mon.hp <= u.mon.hp) { await this.msg('sText_ButItFailed'); return; } fixed = t.mon.hp - u.mon.hp; }
     if (eff === 'COUNTER') { if (!u.lastDamage || !u.lastDamagePhys) { await this.msg('sText_ButItFailed'); return; } fixed = u.lastDamage * 2; }
     if (eff === 'OHKO') {
-      if (t.mon.ability === 'STURDY') { await this.msg('sText_PkmnProtectedBy', this.ab(t, u)); return; }
+      if (this.defAb(t.mon) === 'STURDY') { await this.msg('sText_PkmnProtectedBy', this.ab(t, u)); return; }
       await this.hitTarget(u, t, t.mon.hp, typeEffv, false); await this.msg('sText_OneHitKO'); return;
     }
     if (eff === 'FALSE_SWIPE') { }
@@ -464,12 +531,15 @@ class Battle {
     if (eff === 'DOUBLE_HIT' || eff === 'TWINEEDLE') hits = 2;
     if (eff === 'MULTI_HIT') { const r = rand(4); hits = r > 1 ? rand(4) + 2 : r + 2; }
     if (eff === 'TRIPLE_KICK') hits = 3;
+    const bond = u.mon.ability === 'PARENTAL BOND' && hits === 1 && !['EXPLOSION', 'ENDEAVOR'].includes(eff);
+    if (bond) hits = 2;
     let total = 0, n = 0;
     for (let i = 0; i < hits; i++) {
       if (t.mon.fainted || u.mon.fainted) break;
       if (eff === 'TRIPLE_KICK' && i > 0 && !this.accCheck(u, t, mv)) break;
-      const crit = fixed === null && this.critCheck(u, mv);
+      const crit = fixed === null && this.critCheck(u, mv, t);
       let dmg = fixed !== null ? fixed : this.calcDamage(u, t, mv, crit, eff === 'TRIPLE_KICK' ? mv.p * (i + 1) : power);
+      if (bond && i === 1) dmg = Math.max(1, Math.floor(dmg / 4));
       if (eff === 'FALSE_SWIPE' && dmg >= t.mon.hp) dmg = t.mon.hp - 1;
       const dealt = await this.hitTarget(u, t, dmg, fixed !== null ? 1 : typeEffv, crit);
       total += dealt; n++;
@@ -496,14 +566,14 @@ class Battle {
   }
   async afterDamage(u, t, mv, total) {
     const eff = mv.eff, chance = mv.ch || 100;
-    const secondaryOk = total > 0 && !t.mon.fainted && t.mon.ability !== 'SHIELD DUST' && !t.v.substitute;
+    const secondaryOk = total > 0 && !t.mon.fainted && this.defAb(t.mon) !== 'SHIELD DUST' && !t.v.substitute;
     const roll = () => rand(100) < chance;
     if (HIT_STATUS[eff] && secondaryOk && roll()) {
       const st = HIT_STATUS[eff];
       if (this.canStatus(t, st)) await this.inflict(t, st);
     }
     if (eff === 'TRI_ATTACK' && secondaryOk && roll()) { const st = pick(['par', 'brn', 'frz']); if (this.canStatus(t, st)) await this.inflict(t, st); }
-    if ((eff === 'FLINCH_HIT' || eff === 'FLINCH_MINIMIZE_HIT' || eff === 'SNORE' || eff === 'TWISTER') && secondaryOk && roll() && !t.movedThisTurn) { if (t.mon.ability !== 'INNER FOCUS') t.v.flinch = true; }
+    if ((eff === 'FLINCH_HIT' || eff === 'FLINCH_MINIMIZE_HIT' || eff === 'SNORE' || eff === 'TWISTER') && secondaryOk && roll() && !t.movedThisTurn) { if (this.defAb(t.mon) !== 'INNER FOCUS') t.v.flinch = true; }
     if (eff === 'CONFUSE_HIT' && secondaryOk && roll() && !t.v.confused && t.mon.ability !== 'OWN TEMPO') { t.v.confused = randInt(2, 5); await this.msg('sText_PkmnWasConfused', this.ab(u, t, t)); }
     if (HIT_STAT_DOWN[eff] && secondaryOk && roll()) await this.changeStat(t, HIT_STAT_DOWN[eff], -1, true, true);
     if (eff === 'ATTACK_UP_HIT' && total > 0 && roll()) await this.changeStat(u, 'atk', 1, false, true);
@@ -671,6 +741,7 @@ class Battle {
     if (st === 'frz' && (ty.includes('ice') || m.ability === 'MAGMA ARMOR')) return false;
     if (st === 'par' && m.ability === 'LIMBER') return false;
     if (st === 'slp' && (m.ability === 'VITAL SPIRIT' || m.ability === 'INSOMNIA')) return false;
+    if (st === 'slp' && this.eTerrain && this.eTerrain.type === 'electric' && !ty.includes('flying') && m.ability !== 'LEVITATE') return false;
     return true;
   }
   async inflict(b, st, lbl, source) {
@@ -687,6 +758,10 @@ class Battle {
 
   // ---------- end of turn ----------
   async endOfTurn() {
+    this.moldBreaker = false;
+    if (this.weather && --this.weather.turns <= 0) { this.weather = null; await this.msg('sText_SunlightFaded'); }
+    else if (this.weather) { if (this.weatherAnim) await this.weatherAnim('sun'); await this.msg('sText_SunlightStrong'); }
+    if (this.eTerrain && --this.eTerrain.turns <= 0) { this.eTerrain = null; await this.msg('The electricity disappeared\nfrom the battlefield.'); }
     const order = [this.P, this.E].sort((a, b) => this.effSpeed(b) - this.effSpeed(a));
     for (const s of [0, 1]) for (const k of ['reflect', 'lightScreen', 'mist']) if (this.fieldFx[k][s] > 0) this.fieldFx[k][s]--;
     for (const b of order) {
@@ -952,6 +1027,9 @@ class Battle {
     const bg = loadImg(`assets/ui/bg_${this.terrain}.png`);
     if (bg.complete && bg.naturalWidth) ctx.drawImage(bg, 0, 0); else rect(0, 0, W, 112, '#f8f8f0');
     if (fx.dark > 0) { ctx.globalAlpha = fx.dark; rect(0, 0, W, 112, '#100818'); ctx.globalAlpha = 1; }
+    const sunA = (this.weather && this.weather.type === 'sun' ? 0.12 : 0) + (fx.dark < 0 ? -fx.dark : 0);
+    if (sunA > 0) { ctx.globalAlpha = sunA; rect(0, 0, W, 112, '#ffd860'); ctx.globalAlpha = 1; }
+    if (this.eTerrain && G.frame % 4 === 0 && this.fx) this.fx.U.add({ x: rand(240), y: 70 + rand(40), shape: 'line', vx: (Math.random() - 0.5) * 2, len: 2, lw: 1, life: 6, color: '#ffe040', alpha: 0.6, glow: true });
     const E = this.E, P = this.P;
     if (this.fx) this.fx.U.draw();
     // enemy
@@ -993,12 +1071,13 @@ class Battle {
   drawBattler(b) {
     const back = b.side === 0, m = b.mon;
     let src, x, y, w = 64, h = 64;
-    if (b.mega) {
-      const mg = MEGA[b.mega];
+    if (m.mega) {
+      const mg = MEGA[m.mega];
       src = `assets/sprites/mega/${back ? (m.shiny ? 'shiny_back' : 'back') : (m.shiny ? 'shiny' : 'front')}_${mg.key}.png`;
-      w = h = 96;
-      if (back) { x = 72 - 48 + b.offX; y = 114 - (mg.bottom.back || 90) + b.offY; }
-      else { x = 176 - 48 + b.offX; y = 76 - (mg.bottom.front || 90) + b.offY; }
+      // PokeAPI 96px art is drawn at 5/6 size so megas stay in scale with the 64px Gen III sprites
+      w = h = 80;
+      if (back) { x = 72 - 40 + b.offX; y = 114 - (mg.bottom.back || 90) * 5 / 6 + b.offY; }
+      else { x = 176 - 40 + b.offX; y = 76 - (mg.bottom.front || 90) * 5 / 6 + b.offY; }
     } else {
       src = monSpriteSrc(m.id, back, m.shiny);
       if (back) { x = 40 + b.offX; y = 48 + (PICPOS.back[m.id] || 0) + b.offY; }
@@ -1012,11 +1091,12 @@ class Battle {
     if (b.alpha !== undefined) ctx.globalAlpha = b.alpha;
     const cx = x + w / 2, by = y + h;
     ctx.translate(cx, by); ctx.scale(sc, sc); ctx.translate(-cx, -by);
-    ctx.drawImage(im, 0, 0, w, clip, x, y + (h - clip), w, clip);
-    if (b.tint && b.tint.a > 0) { const s = silhouette(src, b.tint.color); if (s) { ctx.globalAlpha = b.tint.a; ctx.drawImage(s, 0, 0, w, clip, x, y + (h - clip), w, clip); } }
+    const sw = im.naturalWidth, sh = im.naturalHeight * clip / h;
+    ctx.drawImage(im, 0, sh === 0 ? 0 : 0, sw, sh, x, y + (h - clip), w, clip);
+    if (b.tint && b.tint.a > 0) { const s = silhouette(src, b.tint.color); if (s) { ctx.globalAlpha = b.tint.a; ctx.drawImage(s, 0, 0, sw, sh, x, y + (h - clip), w, clip); } }
     if (b.shine !== null && b.shine !== undefined) {
       const s = silhouette(src, '#ffffff');
-      if (s) { ctx.globalAlpha = 0.8; const bx = x - 20 + b.shine * (w + 40); ctx.beginPath(); ctx.rect(bx, y, 10, h); ctx.clip(); ctx.drawImage(s, x, y); }
+      if (s) { ctx.globalAlpha = 0.8; const bx = x - 20 + b.shine * (w + 40); ctx.beginPath(); ctx.rect(bx, y, 10, h); ctx.clip(); ctx.drawImage(s, x, y, w, h); }
     }
     ctx.restore();
     if (b.statFx) this.drawStatFx(x + w / 2, y + h / 2 + 4, b.statFx);
@@ -1075,6 +1155,15 @@ function drawHealthboxText(m, nx, lx, y) {
   if (g) drawGameText(g, ex, y + 3, g === '♂' ? TC.BLUE : TC.RED, 'small');
   const lv = String(m.level);
   drawGameText('\uE105' + lv, lx + 5 * (3 - lv.length), y + 3, TC.DARK_GRAY, 'small');
+  if (m.mega) drawMegaMark(lx - 9, y + 6);
+}
+function drawMegaMark(x, y) {
+  const g = ctx.createLinearGradient(x, y, x + 8, y + 8);
+  g.addColorStop(0, '#f86890'); g.addColorStop(0.5, '#f8d048'); g.addColorStop(1, '#58a8f8');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x + 4, y + 4, 4, 0, 6.283); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.8; ctx.beginPath();
+  for (let i = 0; i <= 8; i++) ctx.lineTo(x + 4 + Math.sin(i / 8 * 6.283) * 1.8, y + i);
+  ctx.stroke();
 }
 
 // ---------- battle menus (FRLG layout) ----------
@@ -1111,8 +1200,9 @@ class FightMenu {
     if (btnR('left') && i % 2) i--;
     if (btnR('right') && !(i % 2) && i + 1 < n) i++;
     if (i !== this.idx) { this.idx = i; sfx('select'); }
-    if (btn('a')) { sfx('select'); FightMenu.last = this.idx; closeUI(this, this.idx); }
-    else if (btn('b')) { sfx('select'); closeUI(this, -1); }
+    if (btn('select') && this.b.canMega(this.b.P)) { this.mega = !this.mega; sfx(this.mega ? 'stat_up' : 'select'); }
+    if (btn('a')) { sfx('select'); FightMenu.last = this.idx; FightMenu.mega = !!this.mega; closeUI(this, this.idx); }
+    else if (btn('b')) { sfx('select'); FightMenu.mega = false; closeUI(this, -1); }
   }
   draw() {
     const im = loadImg('assets/ui/battle_moves.png'); if (im.complete) ctx.drawImage(im, 0, 112);
@@ -1131,7 +1221,20 @@ class FightMenu {
       drawTextRight(`${m.pp}/${max}`, 224, 122, col);
       drawGameText('TYPE/' + mv.t.toUpperCase().replace('MYSTERY', '???'), 168, 138, TC.DARK_GRAY);
     }
+    if (this.b.canMega(this.b.P)) drawMegaToggle(this.mega);
   }
+}
+// mega evolution trigger shown above the move window (SELECT toggles it)
+function drawMegaToggle(on) {
+  const x = 164, y = 96, t = G.frame;
+  roundRect(x, y, 72, 14, 4, on ? '#281848' : 'rgba(24,24,40,0.75)');
+  if (on) { ctx.globalAlpha = 0.5 + 0.3 * Math.sin(t / 6); ctx.strokeStyle = `hsl(${(t * 6) % 360},90%,65%)`; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, 71, 13); ctx.globalAlpha = 1; }
+  // key stone symbol
+  const cx = x + 8, cy = y + 7, r = 4;
+  const g = ctx.createRadialGradient(cx - 1, cy - 1, 0, cx, cy, r);
+  g.addColorStop(0, '#ffffff'); g.addColorStop(0.5, on ? `hsl(${(t * 6) % 360},90%,60%)` : '#9080c0'); g.addColorStop(1, '#302050');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  drawGameText(on ? 'MEGA: ON' : 'SELECT:MEGA', x + 15, y - 1, on ? ['#f8e070', null] : ['#ffffff', null], 'small');
 }
 function drawBallIcon(x, y, s = 1) {
   const r = 4 * s;
@@ -1343,6 +1446,42 @@ async function battleTransition(kind = 'slice') {
       }
       await wait(1);
     }
+  } else if (kind === 'clockwise') { // B_TRANSITION_CLOCKWISE_WIPE
+    let a = 0;
+    st.draw = () => {
+      ctx.drawImage(snap, 0, 0); ctx.fillStyle = '#000'; ctx.beginPath(); ctx.moveTo(W / 2, H / 2);
+      ctx.arc(W / 2, H / 2, W, -Math.PI / 2, -Math.PI / 2 + a); ctx.closePath(); ctx.fill();
+    };
+    while (a < Math.PI * 2) { a = Math.min(Math.PI * 2, a + Math.PI * 2 / 40); await wait(1); }
+  } else if (kind === 'grid') { // B_TRANSITION_GRID_SQUARES: every 16px square shrinks away
+    let k = 0;
+    st.draw = () => {
+      rect(0, 0, W, H, '#000');
+      const s = Math.max(0, 16 * (1 - k / 32));
+      for (let y = 0; y < H; y += 16) for (let x = 0; x < W; x += 16) if (s > 0) ctx.drawImage(snap, x + 8 - s / 2, y + 8 - s / 2, s, s, x + 8 - s / 2, y + 8 - s / 2, s, s);
+    };
+    while (k < 32) { k++; await wait(1); }
+  } else if (kind === 'shuffle') { // B_TRANSITION_SHUFFLE: wavy scanlines while fading to black
+    let t = 0;
+    st.draw = () => {
+      rect(0, 0, W, H, '#000');
+      for (let i = 0; i < H; i++) { const off = Math.sin(i / 6 + t / 3) * t * 0.5 * (i & 1 ? 1 : -1); ctx.drawImage(snap, 0, i, W, 1, off, i, W, 1); }
+      ctx.globalAlpha = Math.min(1, t / 48); rect(0, 0, W, H, '#000'); ctx.globalAlpha = 1;
+    };
+    while (t < 50) { t++; await wait(1); }
+  } else if (kind === 'bigball') { // B_TRANSITION_BIG_POKEBALL: the field shows through a closing pokeball
+    let t = 0;
+    st.draw = () => {
+      rect(0, 0, W, H, '#000');
+      const r = Math.max(0, 140 * (1 - easeIn(t / 48))), cx = W / 2, cy = H / 2;
+      ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, 6.283); ctx.clip();
+      ctx.drawImage(snap, 0, 0);
+      ctx.globalAlpha = Math.min(0.85, t / 20); ctx.fillStyle = '#000';
+      rect(cx - r, cy - r * 0.07, r * 2, r * 0.14, '#000');
+      ctx.beginPath(); ctx.arc(cx, cy, r * 0.28, 0, 6.283); ctx.fill();
+      ctx.globalAlpha = 1; ctx.restore();
+    };
+    while (t < 48) { t++; await wait(1); }
   } else { // angled wipes
     const L = new Array(H).fill(0), R = new Array(H).fill(W);
     const wipes = [[56, 0, 0, H, 0], [104, H, W, 88, 1], [W, 72, 56, 0, 1], [0, 32, 144, H, 0], [144, H, 184, 0, 1], [56, 0, 168, H, 0], [168, H, 48, 0, 1]];

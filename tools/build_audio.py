@@ -25,6 +25,7 @@ used |= {'MUS_TITLE', 'MUS_NEW_GAME_INTRO', 'MUS_NEW_GAME_EXIT', 'MUS_NEW_GAME_I
          'MUS_ENCOUNTER_GIRL', 'MUS_ENCOUNTER_RIVAL', 'MUS_ENCOUNTER_GYM_LEADER', 'MUS_ENCOUNTER_ROCKET', 'MUS_RIVAL_EXIT', 'MUS_OAK', 'MUS_POKE_CENTER',
          'MUS_FOLLOW_ME', 'MUS_SLOW_PALLET', 'MUS_MOVE_DELETED', 'MUS_DEX_RATING'}
 used |= set(re.findall(r'"playse","(SE_\w+)"', open('js/gen/scripts.js').read()))
+if os.path.exists('js/gen/movese.js'): used |= set(re.findall(r'"(SE_[A-Z0-9_]+)"', open('js/gen/movese.js').read()))
 for f in os.listdir('js'):
     if f.endswith('.js'): used |= set(re.findall(r"'(SE_[A-Z0-9_]+)'", open(f'js/{f}').read()))
 used |= {'SE_SELECT', 'SE_WALL_HIT', 'SE_DOOR', 'SE_EXIT', 'SE_BALL_OPEN', 'SE_BALL', 'SE_BALL_THROW', 'SE_BALL_BOUNCE_1', 'SE_BALL_BOUNCE_2',

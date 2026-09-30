@@ -41,6 +41,9 @@ const HEAL_LOCATIONS = {
   HEAL_LOCATION_PALLET_TOWN: { map: 'PalletTown_PlayersHouse_1F', x: 8, y: 5, dir: DIR_NORTH, mom: true },
   HEAL_LOCATION_VIRIDIAN_CITY: { map: 'ViridianCity_PokemonCenter_1F', x: 7, y: 4, dir: DIR_NORTH },
   HEAL_LOCATION_PEWTER_CITY: { map: 'PewterCity_PokemonCenter_1F', x: 7, y: 4, dir: DIR_NORTH },
+  HEAL_LOCATION_ROUTE4: { map: 'Route4_PokemonCenter_1F', x: 7, y: 4, dir: DIR_NORTH },
+  HEAL_LOCATION_CERULEAN_CITY: { map: 'CeruleanCity_PokemonCenter_1F', x: 7, y: 4, dir: DIR_NORTH },
+  HEAL_LOCATION_VERMILION_CITY: { map: 'VermilionCity_PokemonCenter_1F', x: 7, y: 4, dir: DIR_NORTH },
 };
 
 // ---------- battles from the field ----------
@@ -52,12 +55,15 @@ function battleTerrain(t) {
   if (m.type === 'MAP_TYPE_UNDERGROUND') return 'cave';
   return 'plain';
 }
-// battle_setup.c GetWildBattleTransition / GetTrainerBattleTransition (normal map type)
+// battle_setup.c GetWildBattleTransition / GetTrainerBattleTransition, by transition type of the map
+const WILD_TRANSITIONS = { normal: ['slice', 'whitebars'], cave: ['clockwise', 'grid'] };
+const TRAINER_TRANSITIONS = { normal: ['balls', 'angled'], cave: ['shuffle', 'bigball'] };
+function transitionType() { return Field.map && Field.map.type === 'MAP_TYPE_UNDERGROUND' ? 'cave' : 'normal'; }
 function leadLevels(n) { return Game.party.filter(m => m.hp > 0).slice(0, n).reduce((a, m) => a + m.level, 0); }
 async function startWildBattle(mon, t) {
   registerSeen(mon.id);
   Audio_.playSong('MUS_VS_WILD');
-  await battleTransition(mon.level < leadLevels(1) ? 'slice' : 'whitebars');
+  await battleTransition(WILD_TRANSITIONS[transitionType()][mon.level < leadLevels(1) ? 0 : 1]);
   const b = new Battle({ party: [mon], terrain: battleTerrain(t) });
   const res = await b.run();
   await afterBattle(b, res, false);
@@ -71,7 +77,7 @@ async function startTrainerBattle(tid, o = {}) {
   Audio_.playSong(tr.clsId === 'TRAINER_CLASS_LEADER' ? 'MUS_VS_GYM_LEADER' : 'MUS_VS_TRAINER');
   const need = tr.double ? 2 : 1;
   const enemySum = tr.party.slice(0, need).reduce((a, p) => a + p.lvl, 0);
-  await battleTransition(enemySum < leadLevels(need) ? 'balls' : 'angled');
+  await battleTransition(TRAINER_TRANSITIONS[transitionType()][enemySum < leadLevels(need) ? 0 : 1]);
   const terrain = tr.clsId === 'TRAINER_CLASS_LEADER' ? 'leader' : battleTerrain(Field.tile(Field.player.x, Field.player.y));
   const b = new Battle({ party, trainer: { id: tid, cls: tr.cls, clsId: tr.clsId, name, pic: tr.pic, money: tr.money, items: tr.items.slice(), loseText: o.loseText, winText: o.winText }, canLose: o.canLose, terrain });
   const res = await b.run();
