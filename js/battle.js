@@ -1178,11 +1178,24 @@ async function learnMove(mon, moveId, msgFn) {
 async function evolve(mon) {
   const from = mon.id, to = mon.levelEvolution();
   const oldName = mon.name;
-  let showNew = false, flash = 0;
+  let showNew = false, flash = 0, sil = 0, scale = 1;
+  // evolution_scene.c: original background, mon silhouettes alternate and change size
+  const silCanvas = document.createElement('canvas'); silCanvas.width = silCanvas.height = 64;
+  const sg = silCanvas.getContext('2d');
   const scr = new Screen(() => {
-    rect(0, 0, W, H, '#000');
+    drawImg('assets/ui/evo_bg.png', 0, 0);
     const id = showNew ? to : from;
-    drawMonSprite(id, false, 88, 24, {});
+    if (sil <= 0) drawMonSprite(id, false, 88, 32, {});
+    else {
+      const im = loadImg(monSpriteSrc(id, false));
+      if (im.complete && im.naturalWidth) {
+        sg.clearRect(0, 0, 64, 64); sg.globalCompositeOperation = 'source-over'; sg.drawImage(im, 0, 0);
+        sg.globalCompositeOperation = 'source-in'; sg.fillStyle = '#ffffff'; sg.fillRect(0, 0, 64, 64);
+        const w = 64 * scale;
+        if (sil < 1) { ctx.globalAlpha = 1 - sil; ctx.drawImage(im, 88, 32); }
+        ctx.globalAlpha = sil; ctx.drawImage(silCanvas, 120 - w / 2, 64 - w / 2, w, w); ctx.globalAlpha = 1;
+      }
+    }
     if (flash) { ctx.globalAlpha = flash; rect(0, 0, W, H, '#fff'); ctx.globalAlpha = 1; }
     drawMsgFrame(false);
   });
@@ -1192,18 +1205,21 @@ async function evolve(mon) {
   await wait(40);
   Audio_.playSong('MUS_EVOLUTION');
   let cancelled = false;
+  for (let f = 0; f <= 16; f++) { sil = f / 16; await wait(2); }
   for (let i = 0; i < 16 && !cancelled; i++) {
     showNew = !showNew;
-    for (let f = 0; f < 18 - i; f++) { if (Input.held.b) { cancelled = true; break; } await wait(1); }
+    const len = Math.max(4, 20 - i);
+    for (let f = 0; f < len; f++) { scale = showNew ? 0.4 + 0.6 * f / len : 1 - 0.6 * f / len; if (Input.held.b) { cancelled = true; break; } await wait(1); }
   }
+  scale = 1;
   if (cancelled) {
-    showNew = false;
+    showNew = false; sil = 0;
     await msg(T('gText_PkmnStoppedEvolving', { STR_VAR_1: oldName }) || expandText(`Huh? ${oldName}\nstopped evolving!`));
     MsgBox.close(); scr.close();
     return false;
   }
   for (let f = 0; f <= 20; f++) { flash = f / 20; await wait(1); }
-  showNew = true;
+  showNew = true; sil = 0;
   const oldHp = mon.stats.hp;
   mon.id = to; mon.calcStats(); mon.hp = Math.min(mon.stats.hp, mon.hp + (mon.stats.hp - oldHp));
   for (let f = 20; f >= 0; f--) { flash = f / 20; await wait(1); }

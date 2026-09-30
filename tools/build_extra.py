@@ -101,3 +101,46 @@ try:
             if c: op[x, y] = kpp[c] + (255,)
     os.makedirs(f'{OUT}/font', exist_ok=True); o.save(f'{OUT}/font/keypad.png')
 except Exception as e: print('keypad fail', e)
+
+# ---- naming screen (naming_screen.c: bg3 background, bg1/bg2 keyboard panels, sprites) ----
+try:
+    ns = f'{PFR}/graphics/naming_screen'
+    os.makedirs(f'{OUT}/naming', exist_ok=True)
+    banks = [jasc(f'{ns}/{n}.pal') for n in ['menu', 'page_swap_upper', 'page_swap_lower', 'page_swap_others', 'buttons', 'cursor']]
+    full = []
+    for b in banks: full += (b + [(0, 0, 0)] * 16)[:16]
+    full += [(0, 0, 0)] * 16 * 4
+    full += (jasc(f'{ns}/keyboard.pal') + [(0, 0, 0)] * 16)[:16]
+    t = idx_tiles(f'{ns}/menu.png')
+    for n in ['background', 'keyboard_upper', 'keyboard_lower', 'keyboard_symbols']:
+        render_map(t, f'{ns}/{n}.bin', full).save(f'{OUT}/naming/{n}.png')
+    spal = {'back_button': 4, 'ok_button': 4, 'page_swap_frame': 4, 'page_swap_button': 4, 'page_swap_upper': 1, 'page_swap_lower': 2,
+            'page_swap_others': 3, 'cursor': 5, 'cursor_filled': 5, 'cursor_squished': 5, 'input_arrow': 3, 'underscore': 3, 'pc_icon_off': 0, 'pc_icon_on': 0}
+    for n, b in spal.items():
+        im = Image.open(f'{ns}/{n}.png'); px = im.load(); p = banks[b]
+        o = Image.new('RGBA', im.size, (0, 0, 0, 0)); op = o.load()
+        for y in range(im.size[1]):
+            for x in range(im.size[0]):
+                c = px[x, y] & 15
+                if c: op[x, y] = p[c] + (255,)
+        o.save(f'{OUT}/naming/{n}.png')
+    im = Image.open(f'{ns}/rival.png'); px = im.load(); p = jasc(f'{ns}/rival.pal')
+    o = Image.new('RGBA', im.size, (0, 0, 0, 0)); op = o.load()
+    for y in range(im.size[1]):
+        for x in range(im.size[0]):
+            c = px[x, y] & 15
+            if c: op[x, y] = p[c] + (255,)
+    o.save(f'{OUT}/naming/rival.png')
+except Exception as e: print('naming fail', e)
+
+# ---- pokecenter heal machine sprites (field_effect.c FldEff_PokecenterHeal) ----
+try:
+    for n in ['pokeball_glow', 'pokemoncenter_monitor']:
+        im = Image.open(f'{PFR}/graphics/field_effects/pics/{n}.png'); p = ppal(im); px = im.load()
+        o = Image.new('RGBA', im.size, (0, 0, 0, 0)); op = o.load()
+        for y in range(im.size[1]):
+            for x in range(im.size[0]):
+                c = px[x, y] & 15
+                if c: op[x, y] = p[c] + (255,)
+        os.makedirs(f'{OUT}/fx', exist_ok=True); o.save(f'{OUT}/fx/{n}.png')
+except Exception as e: print('heal fx fail', e)

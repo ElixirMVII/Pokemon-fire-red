@@ -136,7 +136,7 @@ function expandText(raw, extra = {}) {
       case 'DPAD_RIGHT': return '\uE409';
       case 'DPAD_UPDOWN': return '\uE40A';
       case 'DPAD_LEFTRIGHT': return '\uE40B';
-      case 'DPAD_NONE': return '\uE40C';
+      case 'DPAD_NONE': case 'DPAD_ANY': return '\uE40C';
       case 'PAUSE': return '\x03' + String.fromCharCode(parseInt(arg) || 0);
       case 'PAUSE_UNTIL_PRESS': return '\x04';
       case 'COLOR': return '\x05' + (arg || 'DARK_GRAY')[0];

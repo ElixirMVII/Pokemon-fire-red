@@ -508,12 +508,31 @@ const MonPic = {
   },
   hide() { if (this.el) { removeUI(this.el); this.el = null; } },
 };
+// FldEff_PokecenterHeal: balls placed every 25 frames (SE_BALL) at (93,36)+offsets, MUS_HEAL,
+// palette flash 3x (8-frame phases) + last flash, monitor flicker; screen coordinates as on the GBA
 async function pokecenterHealFx() {
-  // heal machine: balls placed one by one then flash
-  const n = Game.party.length;
-  const el = { t: 0, update() { }, draw() { } };
-  sfx('ball');
-  await wait(n * 12 + 20);
+  const n = Math.max(1, Game.party.length);
+  const OFF = [[0, 0], [6, 0], [0, 4], [6, 4], [0, 8], [6, 8]];
+  const st = { balls: 0, glow: 0, mon: -1 };
+  const el = { update() { }, draw() {
+    for (let i = 0; i < st.balls; i++) {
+      const x = 93 + OFF[i][0] - 4, y = 36 + OFF[i][1] - 4;
+      drawImg('assets/fx/pokeball_glow.png', x, y);
+      if (st.glow > 0) { ctx.globalAlpha = st.glow; rect(x + 1, y + 1, 6, 6, '#ffff80'); ctx.globalAlpha = 1; }
+    }
+    if (st.mon >= 0) drawImg('assets/fx/pokemoncenter_monitor.png', 112, 16, 0, st.mon * 16, 32, 16);
+  } };
+  G.ui.unshift(el);
+  for (let i = 0; i < n; i++) { st.balls++; sfx('SE_BALL'); await wait(25); }
+  await wait(32 - 25);
   Audio_.fanfare('MUS_HEAL');
-  await wait(100);
+  // monitor flicker runs alongside the glow
+  (async () => { const seq = [[1, 5], [2, 5], [3, 7], [2, 5], [1, 5], [0, 5]]; for (let k = 0; k < 4; k++) for (const [f, d] of seq) { st.mon = f; await wait(d); } st.mon = -1; })();
+  const glow = [1, 0.75, 0.5, 0];
+  for (let f = 0; f < 3; f++) for (let ph = 0; ph < 4; ph++) { st.glow = glow[(ph + 3) & 3] * 0.8; await wait(8); }
+  for (let ph = 0; ph < 3; ph++) { st.glow = glow[ph] * 0.8; await wait(8); }
+  st.glow = 0;
+  await wait(30);
+  await Audio_.waitFanfare();
+  removeUI(el);
 }

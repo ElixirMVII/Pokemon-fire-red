@@ -669,64 +669,72 @@ async function optionMenu() {
 }
 
 // ============================================================
-//  NAMING SCREEN (naming_screen.c keyboard pages)
+//  NAMING SCREEN (naming_screen.c: keyboard pages, column x positions, sprites)
 // ============================================================
-const NAME_PAGES = [
-  ['ABCDEF .', 'GHIJKL ,', 'MNOPQRS ', 'TUVWXYZ '],
-  ['abcdef .', 'ghijkl ,', 'mnopqrs ', 'tuvwxyz '],
-  ['01234   ', '56789   ', '!?♂♀/-  ', '…“”‘\'   '],
+const NAME_KEYS = [
+  ['ABCDEF .', 'GHIJKL ,', 'MNOPQRS', 'TUVWXYZ'],
+  ['abcdef .', 'ghijkl ,', 'mnopqrs', 'tuvwxyz'],
+  ['01234', '56789', '!?♂♀/-', '…“”‘\''],
 ];
-const NAME_PAGE_LABELS = ['UPPER', 'lower', 'OTHERS'];
+const NAME_COLX = [[0, 12, 24, 56, 68, 80, 92, 123], [0, 12, 24, 56, 68, 80, 92, 123], [0, 22, 44, 66, 88, 110]];
+const NAME_PANEL = ['keyboard_lower', 'keyboard_symbols', 'keyboard_upper'];
+const NAME_LABEL = ['page_swap_upper', 'page_swap_lower', 'page_swap_others'];
+// who: 'player' | 'rival' | mon species id
 async function nameScreen(title, maxLen, def, monId) {
-  let name = '', page = 0, cx = 0, cy = 0; // cx 8 = side buttons column
+  let name = '', page = 0, cx = 0, cy = 0, onButtons = false, btn = 0;
+  const who = monId ? monId : /RIVAL/.test(title) ? 'rival' : 'player';
+  const heading = monId ? SPECIES[monId].name + S('gText_PkmnsNickname', "'s nickname?") : title;
+  const cols = () => NAME_KEYS[page][cy].length;
   const scr = new Screen(() => {
-    rect(0, 0, W, H, '#f8f0d8');
-    drawStdFrame(1, 1, 28, 4);
-    if (monId) drawMonIcon(monId, 8, 6, Math.floor(G.frame / 16) % 2);
-    else drawImg(Game.player.gender === 'F' ? 'assets/ow/LEAF.png' : 'assets/ow/RED.png', 16, 8, 0, 0, 16, 32);
-    drawGameText(title, 48, 9, TC.DARK_GRAY);
+    drawImg('assets/naming/background.png', 0, 0);
+    rect(0, 0, 240, 16, '#ffffff');
+    const help = S('gText_MoveOkBack', '{DPAD_ANY}MOVE {A_BUTTON}OK {B_BUTTON}BACK');
+    drawGameText(help, 240 - 4 - textWidth(help, 'small'), 0, TC.DARK_GRAY, 'small');
+    drawImg(`assets/naming/${NAME_PANEL[page]}.png`, 0, 0);
+    // icon
+    if (who === 'player') drawImg(Game.player.gender === 'F' ? 'assets/ow/GREEN_NORMAL.png' : 'assets/ow/RED_NORMAL.png', 48, 25, 0, 0, 16, 32);
+    else if (who === 'rival') drawImg('assets/naming/rival.png', 48, 21, 0, 0, 16, 32);
+    else drawMonIcon(monId, 40, 25, Math.floor(G.frame / 16) % 2);
+    drawGameText(heading, 73, 33, TC.DARK_GRAY);
+    // text entry + underscores + input arrow
     for (let i = 0; i < maxLen; i++) {
-      const ch = name[i];
-      if (ch) drawGameText(ch, 96 + i * 8, 25, TC.DARK_GRAY);
-      rect(96 + i * 8, 39, 6, 1, i === name.length && (G.frame >> 4) % 2 ? '#e83838' : '#707070');
+      if (name[i]) drawGameText(name[i], 64 + i * 8, 49, TC.DARK_GRAY);
+      drawImg('assets/naming/underscore.png', 63 + i * 8, 56);
     }
-    drawStdFrame(1, 7, 20, 12);
-    drawGameText(NAME_PAGE_LABELS[page], 16, 57 - 8, TC.BLUE, 'small');
-    NAME_PAGES[page].forEach((row, y) => [...row].forEach((ch, x) => {
-      const px = 20 + x * 18, py = 68 + y * 20;
-      if (cx === x && cy === y) rect(px - 3, py - 2, 14, 17, '#f8d060');
-      drawGameText(ch, px, py, TC.DARK_GRAY);
-    }));
-    const btns = [NAME_PAGE_LABELS[(page + 1) % 3], 'BACK', 'OK'];
-    btns.forEach((b, i) => {
-      drawStdFrame(23, 8 + i * 4, 6, 2);
-      if (cx === 8 && cy === i + (i === 2 ? 1 : 0)) rect(184, 64 + i * 32, 48, 16, '#f8d060');
-      drawGameText(b, 188, 65 + i * 32, TC.DARK_GRAY);
-    });
+    if (name.length < maxLen && (G.frame >> 4) % 2 === 0) drawImg('assets/naming/input_arrow.png', 60 + name.length * 8, 52);
+    // keys
+    NAME_KEYS[page].forEach((row, r) => [...row].forEach((ch, c) => drawGameText(ch, 24 + NAME_COLX[page][c], 81 + r * 16, TC.WHITE)));
+    // page swap / back / ok
+    drawImg('assets/naming/page_swap_frame.png', 184, 72);
+    drawImg(`assets/naming/${NAME_LABEL[page]}.png`, 184, 80);
+    drawImg('assets/naming/back_button.png', 184, 104);
+    drawImg('assets/naming/ok_button.png', 184, 128);
+    if (onButtons) {
+      const y = [72, 104, 128][btn], h = [32, 24, 24][btn];
+      ctx.globalAlpha = 0.25 + 0.2 * Math.sin(G.frame / 6); rect(186, y + 2, 36, h - 12, '#ffffff'); ctx.globalAlpha = 1;
+    } else drawImg('assets/naming/cursor.png', 24 + NAME_COLX[page][cx] + 14 - 8, 76 + cy * 16);
   });
   await enterFull(scr);
-  const side = () => cy === 0 ? 'PAGE' : cy === 1 ? 'BACK' : 'OK';
+  const type = ch => { if (name.length < maxLen) { name += ch; if (name.length === maxLen) { onButtons = true; btn = 2; } } };
   while (true) {
     const k = await scr.key();
-    if (k === 'up') cy = (cy + 3) % 4;
-    else if (k === 'down') cy = (cy + 1) % 4;
-    else if (k === 'left') cx = cx === 0 ? 8 : cx - 1;
-    else if (k === 'right') cx = cx === 8 ? 0 : cx + 1;
-    else if (k === 'select') page = (page + 1) % 3;
+    if (k === 'up' || k === 'down') {
+      if (onButtons) btn = (btn + (k === 'up' ? 2 : 1)) % 3;
+      else { cy = (cy + (k === 'up' ? 3 : 1)) % 4; cx = Math.min(cx, cols() - 1); }
+    } else if (k === 'left' || k === 'right') {
+      if (onButtons) { onButtons = false; cx = k === 'left' ? cols() - 1 : 0; cy = Math.min(3, btn === 0 ? 0 : btn === 1 ? 2 : 3); }
+      else if (k === 'right' && cx === cols() - 1) { onButtons = true; btn = cy <= 1 ? 0 : cy === 2 ? 1 : 2; }
+      else if (k === 'left' && cx === 0) { onButtons = true; btn = cy <= 1 ? 0 : cy === 2 ? 1 : 2; }
+      else cx += k === 'left' ? -1 : 1;
+    } else if (k === 'select') { page = (page + 1) % 3; cx = Math.min(cx, cols() - 1); }
     else if (k === 'b') name = name.slice(0, -1);
-    else if (k === 'start') { cx = 8; cy = 3; }
+    else if (k === 'start') { onButtons = true; btn = 2; }
     else if (k === 'a') {
-      if (cx === 8) {
-        const s = side();
-        if (s === 'PAGE') page = (page + 1) % 3;
-        else if (s === 'BACK') name = name.slice(0, -1);
-        else break;
-      } else if (name.length < maxLen) {
-        const ch = NAME_PAGES[page][cy][cx];
-        name += ch;
-        if (name.length === maxLen) { cx = 8; cy = 3; }
-      }
-    }
+      if (!onButtons) type(NAME_KEYS[page][cy][cx]);
+      else if (btn === 0) { page = (page + 1) % 3; }
+      else if (btn === 1) name = name.slice(0, -1);
+      else break;
+    } else continue;
     sfx('select');
   }
   sfx('select');
