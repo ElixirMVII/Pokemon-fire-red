@@ -2,7 +2,7 @@
 
 A browser remake of Pokémon FireRed built from scratch in plain HTML5 Canvas + JavaScript. There's no build step and no dependencies. It covers the start of the game up to the first gym (Brock) and follows the Gen III mechanics.
 
-> Personal fan project. Pokémon sprites are loaded at runtime from the public [PokeAPI sprites](https://github.com/PokeAPI/sprites) repo and are **not** included here. If they can't load, simple placeholder sprites are drawn instead. Maps, tiles and characters are original procedural pixel art.
+> Personal fan project. The official FireRed/LeafGreen Pokémon sprites (front, back, shiny) are bundled in `assets/sprites/` (sourced from [PokeAPI sprites](https://github.com/PokeAPI/sprites)); they are © Nintendo / Game Freak, so keep this repository private. The game works fully offline. Maps, tiles and overworld characters are procedural pixel art; the Pixelify Sans font (OFL) is in `assets/fonts/`.
 
 ## How to play
 
