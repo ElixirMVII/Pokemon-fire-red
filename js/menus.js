@@ -760,25 +760,39 @@ async function pokeMart(stock) {
     await MsgBox.waitPrinted();
   }
 }
+// buy menu (shop.c / buy_menu_helpers.c windows: money 1,1 8x3; list 11,1 17x12; desc 5,14 25x6; in-bag 1,11 13x2; qty 17,9 12x4)
 async function martBuy(stock) {
   MsgBox.close();
   const list = stock.filter(id => ITEMS[id]);
-  let cur = 0, scroll = 0;
+  let cur = 0, scroll = 0, qty = null;
   const scr = new Screen(() => {
     Field.draw();
-    drawMoneyWin();
-    drawStdFrame(12, 1, 17, 12);
+    drawImg('assets/ui/shop_frame.png', 0, 0);
+    drawStdFrame(1, 1, 8, 3);
+    drawGameText(S('gText_TrainerCardMoney', 'MONEY'), 8, 9, TC.DARK_GRAY);
+    drawTextRight('¥' + Game.player.money, 70, 24, TC.DARK_GRAY);
     for (let r = 0; r < 6; r++) {
       const i = scroll + r; if (i > list.length) break;
       const y = 10 + r * 16;
-      if (i === list.length) drawGameText(S('gFameCheckerText_Cancel', 'CANCEL'), 106, y, TC.DARK_GRAY);
-      else { drawGameText(ITEMS[list[i]].n, 106, y, TC.DARK_GRAY); drawTextRight('¥' + ITEMS[list[i]].price, 228, y, TC.DARK_GRAY); }
-      if (i === cur) drawGameText('▶', 98, y, TC.DARK_GRAY);
+      if (i === list.length) drawGameText(S('gFameCheckerText_Cancel', 'CANCEL'), 97, y, TC.DARK_GRAY);
+      else { drawGameText(ITEMS[list[i]].n, 97, y, TC.DARK_GRAY); drawTextRight('¥' + ITEMS[list[i]].price, 220, y, TC.DARK_GRAY); }
+      if (i === cur) drawGameText('▶', 89, y, qty ? TC.LIGHT : TC.DARK_GRAY);
     }
-    drawMsgFrame(false);
+    if (scroll > 0) drawGameText('\uE079', 152, 2 + (G.frame >> 4) % 2, TC.DARK_GRAY);
+    if (scroll + 6 < list.length + 1) drawGameText('\uE07A', 152, 100 - (G.frame >> 4) % 2, TC.DARK_GRAY);
     const id = list[cur];
-    if (id) { itemIcon(id, 8, 124); expandText(ITEMS[id].desc).split('\n').forEach((l, i) => drawGameText(l, 40, 115 + i * 14, TC.DARK_GRAY)); }
-    else drawGameText(S('gText_QuitShopping', 'Quit shopping.'), 40, 121, TC.DARK_GRAY);
+    itemIcon(id || 'RETURN', 8, 122);
+    if (!MsgBox.open) {
+      const d = id ? expandText(ITEMS[id].desc) : S('gText_QuitShopping', 'Quit shopping.');
+      d.split('\n').forEach((l, i) => drawGameText(l, 40, 115 + i * 14, TC.WHITE));
+    }
+    if (qty) {
+      drawStdFrame(1, 11, 13, 2);
+      drawGameText(S('gText_InBagVar1', 'IN BAG: {STR_VAR_1}', { STR_VAR_1: padL(Bag.count(id), 3, '0') }), 10, 89, TC.DARK_GRAY);
+      drawStdFrame(17, 9, 12, 4);
+      drawGameText('×' + padL(qty.n, 2, '0'), 144, 81, TC.DARK_GRAY);
+      drawTextRight('¥' + qty.n * ITEMS[id].price, 228, 81, TC.DARK_GRAY);
+    }
   });
   scr.open();
   while (true) {
@@ -792,14 +806,30 @@ async function martBuy(stock) {
       if (Game.player.money < it.price) { await menuMsg(S('gText_YouDontHaveMoney', "You don't have enough money."), { color: TC.BLUE }); continue; }
       MsgBox.show(S('gText_Var1CertainlyHowMany', '{STR_VAR_1}? Certainly.\nHow many would you like?', { STR_VAR_1: it.n }), { color: TC.BLUE });
       await MsgBox.waitPrinted();
-      const q = await chooseQty(Math.min(99, Math.floor(Game.player.money / it.price)), { price: it.price });
+      const max = Math.min(99, Math.floor(Game.player.money / it.price));
+      qty = { n: 1 };
+      let ok = false;
+      const kb = new Overlay(() => { }); kb.open();
+      while (true) {
+        const q = await kb.key();
+        if (q === 'up') qty.n = qty.n >= max ? 1 : qty.n + 1;
+        else if (q === 'down') qty.n = qty.n <= 1 ? max : qty.n - 1;
+        else if (q === 'right') qty.n = Math.min(max, qty.n + 10);
+        else if (q === 'left') qty.n = Math.max(1, qty.n - 10);
+        else if (q === 'a') { ok = true; sfx('select'); break; }
+        else if (q === 'b') { sfx('select'); break; }
+        else continue;
+        sfx('select');
+      }
+      kb.close();
+      const n = qty.n; qty = null;
       MsgBox.close();
-      if (!q) continue;
-      if (!await menuYesNo(S('gText_Var1AndYouWantedVar2', '{STR_VAR_1}, and you want {STR_VAR_2}.\nThat will be ¥{STR_VAR_3}. Okay?', { STR_VAR_1: it.n, STR_VAR_2: String(q), STR_VAR_3: String(q * it.price) }), 23, 9)) continue;
-      Game.player.money -= q * it.price; Bag.add(id, q);
-      sfx('save');
+      if (!ok) continue;
+      if (!await menuYesNo(S('gText_Var1AndYouWantedVar2', '{STR_VAR_1}, and you want {STR_VAR_2}.\nThat will be ¥{STR_VAR_3}. Okay?', { STR_VAR_1: it.n, STR_VAR_2: String(n), STR_VAR_3: String(n * it.price) }), 23, 9)) continue;
+      Game.player.money -= n * it.price; Bag.add(id, n);
+      sfx('SE_SHOP');
       await menuMsg(S('gText_HereYouGoThankYou', 'Here you are!\nThank you!'), { color: TC.BLUE });
-      if (id === 'POKE_BALL' && q >= 10 && Bag.add('PREMIER_BALL', 1)) await menuMsg(expandText('I\'ll throw in a PREMIER BALL, too.'), { color: TC.BLUE });
+      if (id === 'POKE_BALL' && n >= 10 && Bag.add('PREMIER_BALL', 1)) await menuMsg(expandText("I'll throw in a PREMIER BALL, too."), { color: TC.BLUE });
     }
     if (cur < scroll) scroll = cur; if (cur > scroll + 5) scroll = cur - 5;
   }

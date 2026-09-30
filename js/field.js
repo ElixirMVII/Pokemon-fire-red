@@ -495,7 +495,7 @@ const Field = {
     this.fx = this.fx.filter(f => f.t < (f.type === 'grass' ? 60 : 16) || (f.type === 'grass' && this.anyAt(f.x, f.y)));
     // camera follows player
     this.centerCamera();
-    if (this.popup) { this.popup.t++; if (this.popup.t > 180) this.popup = null; }
+    if (this.popup) { this.popup.t++; if (this.popup.t > 145) this.popup = null; }
   },
   anyAt(x, y) { return (this.player.x === x && this.player.y === y) || this.objects.some(o => !o.hidden && o.x === x && o.y === y); },
   aiStep(o) {
@@ -572,12 +572,14 @@ const Field = {
       const im = loadImg('assets/fx/emoticons.png');
       if (im.complete) ctx.drawImage(im, 0, o.emote.kind * 16, 16, 16, Math.round(o.x * 16 + o.offX - cx), Math.round(o.y * 16 + o.offY - cy - 28), 16, 16);
     }
-    // map name popup (FRLG style box sliding from top-left)
+    // map name popup (map_name_popup.c: 14x2 window at tile x 1, slides 2px/frame, holds 120 frames)
     if (this.popup) {
-      const t = this.popup.t, off = t < 16 ? -24 + t * 1.5 : t > 164 ? -(t - 164) * 1.5 : 0;
-      const w = Math.max(80, textWidth(this.popup.text) + 24);
-      drawStdFrame(1, (off + 9) / 8, Math.ceil(w / 8) - 2, 2);
-      drawGameText(this.popup.text, 8 + Math.round((w - 16 - textWidth(this.popup.text)) / 2), off + 10, TC.DARK_GRAY);
+      const t = this.popup.t, pos = t <= 12 ? t * 2 : t <= 132 ? 24 : Math.max(0, 24 - (t - 132) * 2);
+      const y = pos - 8;
+      ctx.save(); ctx.translate(0, y - 16);
+      drawStdFrame(1, 2, 14, 2);
+      drawGameText(this.popup.text, 8 + Math.floor((112 - textWidth(this.popup.text)) / 2), 18, TC.DARK_GRAY);
+      ctx.restore();
     }
   },
   drawObj(o, cx, cy) {

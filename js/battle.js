@@ -1231,17 +1231,92 @@ async function evolve(mon) {
   MsgBox.close(); scr.close();
   return true;
 }
-async function battleTransition(trainer) {
-  for (let i = 0; i < 3; i++) { G.fade = 0.8; G.fadeColor = '#fff'; await wait(4); G.fade = 0; await wait(4); }
-  G.fadeColor = '#000';
-  let t = 0;
-  const s = { update() { }, draw() {
-    for (let i = 0; i < 10; i++) {
-      const w = Math.min(W, t * 14 - i * 6); if (w <= 0) continue;
-      if (i % 2) rect(W - w, i * 16, w, 16, '#000'); else rect(0, i * 16, w, 16, '#000');
-    }
+// battle_transition.c: gray-flash intro (CreateIntroTask(0,0,2,2,2)) then the chosen effect, ending in black
+async function battleTransition(kind = 'slice') {
+  // snapshot of the field at native resolution
+  const snap = document.createElement('canvas'); snap.width = W; snap.height = H;
+  const sg = snap.getContext('2d'); sg.imageSmoothingEnabled = false;
+  sg.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, W, H);
+  const st = { gray: 0, draw: null };
+  const el = { opaque: true, update() { }, draw() {
+    if (st.draw) st.draw(); else ctx.drawImage(snap, 0, 0);
+    if (st.gray) { ctx.globalAlpha = st.gray / 16; rect(0, 0, W, H, 'rgb(90,90,90)'); ctx.globalAlpha = 1; }
   } };
-  G.ui.push(s);
-  for (t = 0; t < 28; t++) await wait(1);
-  removeUI(s);
+  G.ui.push(el);
+  for (let n = 0; n < 2; n++) {
+    for (st.gray = 2; st.gray <= 16; st.gray += 2) await wait(1);
+    for (st.gray = 14; st.gray >= 0; st.gray -= 2) await wait(1);
+  }
+  st.gray = 0;
+  if (kind === 'slice') {
+    let x = 0, speed = 256, accel = 1;
+    st.draw = () => {
+      rect(0, 0, W, H, '#000');
+      for (let i = 0; i < H; i++) {
+        if (i & 1) { if (W - x > 0) ctx.drawImage(snap, x, i, W - x, 1, 0, i, W - x, 1); }
+        else if (W - x > 0) ctx.drawImage(snap, 0, i, W - x, 1, x, i, W - x, 1);
+      }
+    };
+    while (x < W) { x = Math.min(W, x + (speed >> 8)); if (speed <= 0xFFF) speed += accel; if (accel < 128) accel <<= 1; await wait(1); }
+  } else if (kind === 'whitebars') {
+    const delays = [0, 9, 15, 6, 12, 3], bars = delays.map(d => ({ d, x: W, fade: 0 }));
+    st.draw = () => {
+      ctx.drawImage(snap, 0, 0);
+      bars.forEach((b, i) => { const y = i * 27; if (b.x < W) { ctx.globalAlpha = Math.min(1, b.fade / 4096); rect(b.x, y, W - b.x, 27, '#fff'); ctx.globalAlpha = 1; } });
+    };
+    while (bars.some(b => b.x > 0 || b.fade < 4096)) {
+      for (const b of bars) { if (b.d > 0) { b.d--; continue; } b.x = Math.max(0, b.x - 24); b.fade = Math.min(4096, b.fade + 192); }
+      await wait(1);
+    }
+    let k = 0;
+    st.draw = () => { rect(0, 0, W, H, '#fff'); ctx.globalAlpha = Math.min(1, k / 16); rect(0, 0, W, H, '#000'); ctx.globalAlpha = 1; };
+    for (let c = 0; k <= 16; c += 480) { k = c >> 8; await wait(1); }
+  } else if (kind === 'balls') {
+    let side = rand(2);
+    const delays = [0, 16, 32, 8, 24];
+    const balls = delays.map((d, i) => { const b = { x: side ? W + 16 : -16, y: i * 32 + 16, side, d, rot: 0, trail: side ? W : 0 }; side ^= 1; return b; });
+    st.draw = () => {
+      ctx.drawImage(snap, 0, 0);
+      for (const b of balls) {
+        if (b.side) { if (b.trail < W) rect(b.trail, b.y - 16, W - b.trail, 32, '#000'); }
+        else if (b.trail > 0) rect(0, b.y - 16, b.trail, 32, '#000');
+        if (b.d <= 0 && b.x > -16 && b.x < W + 16) {
+          const im = loadImg('assets/fx/sliding_pokeball.png');
+          if (im.complete) { ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.rot); ctx.drawImage(im, -16, -16); ctx.restore(); }
+        }
+      }
+    };
+    while (balls.some(b => b.side ? b.x > -16 : b.x < W + 16)) {
+      for (const b of balls) {
+        if (b.d > 0) { b.d--; continue; }
+        b.x += b.side ? -8 : 8; b.rot += (b.side ? -4 : 4) * Math.PI * 2 / 256;
+        if (b.x >= 0 && b.x <= W) b.trail = b.side ? Math.min(b.trail, (b.x >> 3) * 8) : Math.max(b.trail, ((b.x >> 3) + 1) * 8);
+        if (b.side && b.x < 0) b.trail = 0; if (!b.side && b.x > W) b.trail = W;
+      }
+      await wait(1);
+    }
+  } else { // angled wipes
+    const L = new Array(H).fill(0), R = new Array(H).fill(W);
+    const wipes = [[56, 0, 0, H, 0], [104, H, W, 88, 1], [W, 72, 56, 0, 1], [0, 32, 144, H, 0], [144, H, 184, 0, 1], [56, 0, 168, H, 0], [168, H, 48, 0, 1]];
+    st.draw = () => { rect(0, 0, W, H, '#000'); for (let i = 0; i < H; i++) if (R[i] > L[i]) ctx.drawImage(snap, L[i], i, R[i] - L[i], 1, L[i], i, R[i] - L[i], 1); };
+    for (const [sx, sy, ex, ey, dir] of wipes) {
+      // InitBlackWipe/UpdateBlackWipe: Bresenham from start to end, 16 steps per frame
+      let x = sx, y = sy; const dx = Math.abs(ex - sx), dy = Math.abs(ey - sy), stx = sx < ex ? 1 : -1, sty = sy < ey ? 1 : -1;
+      let err = (dx > dy ? dx : -dy) / 2, done = false;
+      while (!done) {
+        for (let k = 0; k < 16 && !done; k++) {
+          const yy = clamp(y, 0, H - 1);
+          if (dir === 0) L[yy] = Math.min(R[yy], Math.max(L[yy], x)); else R[yy] = Math.max(L[yy], Math.min(R[yy], x));
+          if (x === ex && y === ey) { done = true; break; }
+          const e2 = err;
+          if (e2 > -dx) { err -= dy; x += stx; }
+          if (e2 < dy) { err += dx; y += sty; }
+        }
+        await wait(1);
+      }
+    }
+  }
+  st.draw = () => rect(0, 0, W, H, '#000');
+  await wait(2);
+  removeUI(el);
 }

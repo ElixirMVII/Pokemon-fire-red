@@ -1,58 +1,76 @@
-# Pokémon FireRed — fan remake (Pallet Town → Brock)
+# Pokémon FireRed: browser remake from the original game data (Pallet Town → Brock)
 
-A browser remake of Pokémon FireRed built from scratch in plain HTML5 Canvas + JavaScript. There's no build step and no dependencies. It covers the start of the game up to the first gym (Brock) and follows the Gen III mechanics.
+A remake of the start of Pokémon FireRed (from Oak's intro to the Boulder Badge) that runs in a web browser with plain HTML5 Canvas + JavaScript. There's no build step at runtime.
 
-> Personal fan project. The official FireRed/LeafGreen Pokémon sprites (front, back, shiny) are bundled in `assets/sprites/` (sourced from [PokeAPI sprites](https://github.com/PokeAPI/sprites)); they are © Nintendo / Game Freak, so keep this repository private. The game works fully offline. Maps, tiles and overworld characters are procedural pixel art; the Pixelify Sans font (OFL) is in `assets/fonts/`.
+Maps, tilesets, sprites, fonts, window frames, text, event scripts, trainers, wild encounters, species/move/item data, music, sound effects and cries all come from the [pret/pokefirered](https://github.com/pret/pokefirered) decompilation. Scripts in `tools/` extract them into `assets/` and `js/gen/`. The game then runs the original event scripts with its own interpreter, so NPC dialogue, story events, trainer battles and item pickups behave as in the original game.
+
+> Personal fan project. All game assets are © Nintendo / Creatures / Game Freak. Keep this repository private.
 
 ## How to play
 
-Open the game from a local web server:
+The game loads its data with `fetch`, so serve it from a local web server:
 
 ```bash
 python3 -m http.server 8000
 # then open http://localhost:8000
 ```
 
-(Opening `index.html` directly also works in most browsers.)
-
-| Button | Keyboard | 
+| GBA button | Keyboard |
 |---|---|
 | D-pad | Arrow keys / WASD |
 | A | Z, Space, J |
-| B (hold to run once you have Running Shoes) | X, Esc, Backspace, K |
-| START (menu) | Enter |
+| B (hold to run once you have the Running Shoes) | X, Esc, Backspace, K |
+| START | Enter |
 | SELECT | Shift |
 
-On phones and tablets an on-screen gamepad appears. The game saves to `localStorage` from START → SAVE.
+On phones and tablets an on-screen gamepad appears. Sound starts after the first key press (a browser autoplay rule). Save from START → SAVE; the save is stored in `localStorage`.
 
-## What's included
+## What comes from the original game
 
-**Story (FireRed order):** Oak's intro speech (boy/girl, player & rival naming) → bedroom → Oak stops you at the tall grass → pick Bulbasaur / Charmander / Squirtle (the rival takes the one with the type advantage) → rival battle in the lab → Route 1 (Mart employee gives you a Potion) → Viridian City (Oak's Parcel, old man blocking the road) → deliver the parcel for the Pokédex + Poké Balls → Mom gives you the Running Shoes, Daisy gives you the Town Map → optional rival battle on Route 22 → Route 2 → Viridian Forest (5 Bug Catchers, items) → Pewter City → Pewter Gym (Camper Liam, **Brock**) → Boulder Badge + TM39 Rock Tomb.
-
-**Gen III mechanics:**
-- Stat formula with IVs (0–31), EVs (255 per stat / 510 total, awarded per participant), and all 25 natures
-- Abilities that matter here: Overgrow/Blaze/Torrent/Swarm, Static, Poison Point, Keen Eye, Compound Eyes, Shield Dust, Shed Skin, Guts, Run Away, Vital Spirit
-- Damage formula in pokeemerald order: stat stages, crits ignore unfavourable stages, burn halving, STAB, dual-type effectiveness, 85–100% random roll, physical/special split by type, Boulder Badge ×1.1 Attack
-- Accuracy/evasion stages, crit stages (Focus Energy +2, high-crit moves), priority, speed ties, paralysis speed ×¼
-- Status: poison, burn, paralysis, sleep (2–5 turns), freeze (20% thaw); confusion, flinch, Leech Seed, Bind, Rage, Mud Sport, Whirlwind, multi-hit (2–5 distribution), Low Kick by weight, Magnitude
-- Gen III catch formula with 0–3 shake messages, run formula, EXP formula (×1.5 for trainers, split among participants), growth rates
-- Level-up stat window, move learning and forgetting ("1, 2, and… Poof!"), evolution (B cancels), Pokédex seen/owned
-- Wild encounters from the FireRed tables and encounter rates, trainer line of sight, prize money per trainer class, white-out money loss
-- Overworld poison (1 HP every 4 steps), Repel, Escape Rope, ledges, 1/8192 shiny odds
-
-**Menus:** Start menu, Pokédex, party (reorder), 3-page summary, 4-pocket bag, trainer card, save, options (text speed, sound), naming screen, Poké Mart buy/sell (Premier Ball bonus), Pokémon Center, PC (Pokémon storage + item storage).
+- **Maps:** 33 maps rendered from the original layouts, metatiles and tilesets (Pallet Town, Route 1, Viridian City, Route 22, Route 2, Viridian Forest, Pewter City and all their interiors, plus neighbouring edges). They keep the original collision, elevation, metatile behaviours, connections, warps, doors and signs.
+- **Overworld:** the original player/NPC sprites and walking/running animation frames, tall grass and ledge-dust effects, emotes, door animations and the map name popup. It uses the FRLG input order, directional stairs, arrow warps, the original wild encounter logic (rate, cooldown, slot weights) and trainer line of sight.
+- **Scripts:** the original event scripts (`data/maps/*/scripts.inc`, `data/scripts/*.inc`) run on a small VM in `js/vm.js`. This covers messages, movement, trainer battles, give/take items, the Poké Mart, the PC, the Pokémon Center nurse, the old man's catching tutorial, the Running Shoes aide, Brock and so on.
+- **Text:** the FRLG bitmap fonts with their original glyph widths, keypad icons, dialogue and sign frames, the std window frame, NPC text colours, and every UI/battle string taken verbatim.
+- **Screens built to the original window templates:** title screen (logo, Charizard, flames), main menu, Oak's speech, naming screen, start menu with help bar, party menu, 3-page summary, bag, trainer card, save dialog with save stats, options, Poké Mart and PC.
+- **Battles:** original backgrounds, textbox, healthboxes, trainer and Pokémon sprites. Battle transitions follow `battle_transition.c`: Slice and White Bars Fade for wild battles, Pokéballs Trail and Angled Wipes for trainer battles. Data comes from the original trainer parties and species/move tables. The rules are Gen III: damage formula, badge boosts, abilities, statuses, catch formula, EXP and prize money.
+- **Effects:** the Pokémon Center healing machine and the evolution scene.
+- **Audio:** the original MIDI songs and sound effects play through an m4a-style synth (`js/audio.js`). It uses the game's voicegroups, instrument samples, square/wave/noise channels, drum kits and loop points. Fanfares interrupt and then resume the background music. All 151 cries are the original samples.
 
 ## Code layout
 
 ```
-js/core.js     loop, input, UI stack, text boxes, menus, fades, sound
-js/gfx.js      procedural tiles/characters, sprite loading
-js/data.js     type chart, moves, species, items, encounters
-js/pokemon.js  Pokémon (stats, IV/EV, nature, moves)
-js/battle.js   battle engine, level up, move learning, evolution
-js/maps.js     map layouts, warps, signs, connections
-js/world.js    overworld engine, NPCs, encounters, trainers
-js/menus.js    all menu screens, Mart, PC, Nurse
-js/scripts.js  NPCs and story events
-js/main.js     title, intro, save/load
+js/core.js      loop, input, UI stack, fades, synth fallback beeps
+js/text.js      bitmap fonts, text expansion, message box, std menus
+js/field.js     overworld engine (maps, movement, warps, encounters, trainers)
+js/vm.js        event-script interpreter + specials + movement scripts
+js/game.js      game state, bag, save/load, battle glue, white-out
+js/pokemon.js   Pokémon (stats, IV/EV, nature, moves, sprites)
+js/battle.js    battle engine, level up, move learning, evolution, transitions
+js/menus.js     start menu, party, summary, bag, dex, card, save, options,
+                naming screen, Poké Mart, PC
+js/audio.js     MIDI sequencer + m4a-style synth, cries, sound effects
+js/main.js      title screen, main menu, Oak's intro, boot
+js/gen/*.js     generated data (maps, scripts, strings, species, audio, font)
 ```
+
+## Rebuilding the assets
+
+```bash
+git clone https://github.com/pret/pokefirered /tmp/pfr
+sh tools/build_all.sh /tmp/pfr
+```
+
+`build_all.sh` runs these extractors:
+
+| Script | What it extracts |
+|---|---|
+| `build_maps.py` | maps, tilesets, doors |
+| `build_sprites.py` | overworld sprites, field effects |
+| `build_ui.py` | windows, battle graphics, party/summary/bag/card screens, trainer pics |
+| `build_extra.py` | title screen, help bar, item icons, naming screen, heal machine, transitions |
+| `build_mons.py` | Pokémon sprites and icons |
+| `build_font.py` | fonts |
+| `build_data.py` | species, moves, items, trainers, encounters |
+| `build_strings.py` | UI and battle strings |
+| `build_scripts.py` | event scripts |
+| `build_audio.py` | music, sound effects, samples, cries |

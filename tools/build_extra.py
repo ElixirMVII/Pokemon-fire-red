@@ -144,3 +144,22 @@ try:
                 if c: op[x, y] = p[c] + (255,)
         os.makedirs(f'{OUT}/fx', exist_ok=True); o.save(f'{OUT}/fx/{n}.png')
 except Exception as e: print('heal fx fail', e)
+
+# ---- battle transition sliding pokeball (battle_transition.c) ----
+try:
+    bt = f'{PFR}/graphics/battle_transitions'
+    im = Image.open(f'{bt}/sliding_pokeball.png'); px = im.load(); p = jasc(f'{bt}/sliding_pokeball.pal')
+    o = Image.new('RGBA', im.size, (0, 0, 0, 0)); op = o.load()
+    for y in range(im.size[1]):
+        for x in range(im.size[0]):
+            c = px[x, y] & 15
+            if c: op[x, y] = p[c] + (255,)
+    o.save(f'{OUT}/fx/sliding_pokeball.png')
+except Exception as e: print('transition fail', e)
+
+# ---- poke mart buy menu frame (shop.c BuyMenuInitBgs: bg1 frame over the map) ----
+try:
+    sm = f'{PFR}/graphics/shop_menu'
+    im = Image.open(f'{sm}/shop_menu.png'); pal = ppal(im)
+    render_map(idx_tiles(f'{sm}/shop_menu.png'), f'{sm}/shop_tilemap.bin', pal * 16).save(f'{OUT}/ui/shop_frame.png')
+except Exception as e: print('shop fail', e)

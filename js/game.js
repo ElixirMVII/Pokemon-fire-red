@@ -52,10 +52,12 @@ function battleTerrain(t) {
   if (m.type === 'MAP_TYPE_UNDERGROUND') return 'cave';
   return 'plain';
 }
+// battle_setup.c GetWildBattleTransition / GetTrainerBattleTransition (normal map type)
+function leadLevels(n) { return Game.party.filter(m => m.hp > 0).slice(0, n).reduce((a, m) => a + m.level, 0); }
 async function startWildBattle(mon, t) {
   registerSeen(mon.id);
   Audio_.playSong('MUS_VS_WILD');
-  await battleTransition();
+  await battleTransition(mon.level < leadLevels(1) ? 'slice' : 'whitebars');
   const b = new Battle({ party: [mon], terrain: battleTerrain(t) });
   const res = await b.run();
   await afterBattle(b, res, false);
@@ -67,7 +69,9 @@ async function startTrainerBattle(tid, o = {}) {
   const isRival = tr.clsId === 'TRAINER_CLASS_RIVAL_EARLY' || tr.clsId === 'TRAINER_CLASS_RIVAL_LATE';
   const name = isRival ? Game.player.rival : tr.name;
   Audio_.playSong(tr.clsId === 'TRAINER_CLASS_LEADER' ? 'MUS_VS_GYM_LEADER' : 'MUS_VS_TRAINER');
-  await battleTransition(true);
+  const need = tr.double ? 2 : 1;
+  const enemySum = tr.party.slice(0, need).reduce((a, p) => a + p.lvl, 0);
+  await battleTransition(enemySum < leadLevels(need) ? 'balls' : 'angled');
   const terrain = tr.clsId === 'TRAINER_CLASS_LEADER' ? 'leader' : battleTerrain(Field.tile(Field.player.x, Field.player.y));
   const b = new Battle({ party, trainer: { id: tid, cls: tr.cls, clsId: tr.clsId, name, pic: tr.pic, money: tr.money, items: tr.items.slice(), loseText: o.loseText, winText: o.winText }, canLose: o.canLose, terrain });
   const res = await b.run();
@@ -100,7 +104,7 @@ async function whiteOut(fromBattle) {
 }
 // old man catching tutorial (Viridian City)
 async function oldManTutorial() {
-  await battleTransition();
+  await battleTransition('slice');
   const mon = Pokemon.create(13, 5, { wild: true });
   const b = new Battle({ party: [mon], terrain: 'grass', oldMan: true });
   await b.run();
