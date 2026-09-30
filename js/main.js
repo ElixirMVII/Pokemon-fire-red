@@ -52,7 +52,8 @@ const Title = {
 
 async function titleFlow() {
   G.scene = Title;
-  preloadSprites([1, 4, 7, 6]);
+  preloadSprites([6, ...Object.keys(SPECIES).map(Number)]);
+  Object.keys(SPECIES).forEach(id => { getMonSprite(+id, false, true); getMonSprite(+id, true, true); });
   await fadeIn(0.05);
   while (true) {
     await new Promise(res => { const s = new Screen(() => { }); s.opaque = false; s.update = () => { if (btn('start') || btn('a')) { removeUI(s); res(); } }; G.ui.push(s); });
@@ -150,6 +151,6 @@ async function newGame() {
   G.fade = 1;
   requestAnimationFrame(loop);
   // don't let a slow/blocked font request hang the boot
-  try { await Promise.race([document.fonts.load(`10px "Pixelify Sans"`), wait(90)]); } catch (e) { }
+  try { await Promise.race([Promise.all([document.fonts.load(`10px "Pixelify Sans"`), document.fonts.load(`600 10px "Pixelify Sans"`)]), wait(120)]); } catch (e) { }
   runScript(titleFlow);
 })();

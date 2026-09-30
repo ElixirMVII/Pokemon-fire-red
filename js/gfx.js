@@ -463,13 +463,15 @@ function getMonSprite(id, back = false, shiny = false) {
   let e = spriteCache[key];
   if (!e) {
     e = spriteCache[key] = { img: null, ok: false, fb: fallbackSprite(id, back) };
+    // real FRLG sprites bundled in assets/, remote PokeAPI as backup
+    const dir = back ? (shiny ? 'shiny_back' : 'back') : (shiny ? 'shiny' : 'front');
+    const sources = [`assets/sprites/${dir}/${id}.png`, SPRITE_BASE + (back ? 'back/' : '') + (shiny ? 'shiny/' : '') + id + '.png'];
     let tries = 0;
     const load = () => {
       const img = new Image();
-      img.crossOrigin = 'anonymous';
       img.onload = () => { e.img = img; e.ok = true; };
-      img.onerror = () => { if (++tries < 4) setTimeout(load, 800 * tries); };
-      img.src = SPRITE_BASE + (back ? 'back/' : '') + (shiny ? 'shiny/' : '') + id + '.png' + (tries ? '?r=' + tries : '');
+      img.onerror = () => { if (++tries < 4) setTimeout(load, tries === 1 ? 0 : 800 * tries); };
+      img.src = sources[Math.min(tries, 1)] + (tries > 1 ? '?r=' + tries : '');
     };
     load();
   }
